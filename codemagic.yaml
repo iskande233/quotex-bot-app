@@ -27,7 +27,8 @@ workflows:
       - name: Build debug APK
         script: |
           cd frontend
-          flutter build apk --debug
+          BUILD_NUM=${BUILD_NUMBER:-${CM_BUILD_NUMBER:-$(date +%s)}}
+          flutter build apk --debug --build-name=1.0.$BUILD_NUM --build-number=$BUILD_NUM
     artifacts:
       - frontend/build/app/outputs/flutter-apk/app-debug.apk
       - frontend/build/app/outputs/flutter-apk/*.apk
@@ -60,7 +61,8 @@ workflows:
       - name: Build optimized split release APKs
         script: |
           cd frontend
-          flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols
+          BUILD_NUM=${BUILD_NUMBER:-${CM_BUILD_NUMBER:-$(date +%s)}}
+          flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols --build-name=1.0.$BUILD_NUM --build-number=$BUILD_NUM
     artifacts:
       - frontend/build/app/outputs/flutter-apk/*-release.apk
       - frontend/build/app/outputs/flutter-apk/*.apk
