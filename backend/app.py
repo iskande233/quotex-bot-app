@@ -1,5 +1,7 @@
 from __future__ import annotations
 import asyncio
+import json
+from pathlib import Path
 from time import time
 from typing import Set
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -23,6 +25,63 @@ def make_adapter(mode: str) -> QuotexAdapter:
 
 adapter: QuotexAdapter = make_adapter(settings.quotex_mode if not settings.paper_mode else "paper")
 bot = TradingBot(adapter)
+
+DATA_DIR = Path('/data') if Path('/data').exists() else Path('sessions')
+STATE_FILE = DATA_DIR / 'quotex_bot_state.json'
+
+def _load_state() -> dict:
+    try:
+        if STATE_FILE.exists():
+            return json.loads(STATE_FILE.read_text())
+    except Exception:
+        pass
+    return {}
+
+def _save_state(update: dict):
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        state = _load_state()
+        state.update(update)
+        STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2))
+    except Exception:
+        pass
+
+async def restore_server_state():
+    global adapter, bot
+    state = _load_state()
+    if not state:
+        return
+    creds = state.get('quotex_credentials') or {}
+    if creds.get('email') and creds.get('password'):
+        try:
+            new_adapter = PyQuotexAdapter(creds['email'], creds['password'], creds.get('account_type', 'demo'), None)
+            await new_adapter.connect()
+            adapter = new_adapter
+            bot = TradingBot(adapter)
+        except Exception as e:
+            try: bot._log('AUTO_RECONNECT_ERROR', str(e))
+            except Exception: pass
+    if state.get('auto_start') and state.get('bot_config'):
+        try:
+            cfg = BotConfig(**state['bot_config'])
+            await bot.start(await resolve_symbol(cfg))
+            try:
+                bal = await adapter.get_balance(); send_bot_started(bal, cfg)
+            except Exception: pass
+        except Exception as e:
+            try: bot._log('AUTO_START_ERROR', str(e))
+            except Exception: pass
+
+async def server_watchdog_loop():
+    while True:
+        await asyncio.sleep(20)
+        try:
+            state = _load_state()
+            creds = state.get('quotex_credentials') or {}
+            if creds.get('email') and creds.get('password') and not getattr(adapter, 'connected', False):
+                await restore_server_state()
+        except Exception:
+            pass
 
 class WsManager:
     def __init__(self):
@@ -75,6 +134,8 @@ _broadcast_task: asyncio.Task | None = None
 @app.on_event("startup")
 async def on_startup():
     global _broadcast_task
+    asyncio.create_task(restore_server_state())
+    asyncio.create_task(server_watchdog_loop())
     _broadcast_task = asyncio.create_task(broadcast_loop())
 
 @app.on_event("shutdown")
@@ -149,7 +210,8 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "mode": getattr(adapter, "mode", "UNKNOWN")}
+    st = _load_state()
+    return {"ok": True, "mode": getattr(adapter, "mode", "UNKNOWN"), "auto_start": bool(st.get("auto_start")), "persistent_state": str(STATE_FILE)}
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
@@ -184,6 +246,7 @@ async def login(req: LoginRequest):
         raise HTTPException(status_code=401, detail=f"Quotex login failed: {e}")
     adapter = new_adapter
     bot = TradingBot(adapter)
+    _save_state({"quotex_credentials": {"email": req.email, "password": req.password, "account_type": req.account_type}})
     balance = await adapter.get_balance()
     send_login_success(balance)
     await manager.broadcast(await snapshot("login_success", {"mode": getattr(adapter, "mode", "UNKNOWN")}))
@@ -195,12 +258,14 @@ async def logout():
     await bot.stop()
     adapter = PaperQuotexAdapter()
     bot = TradingBot(adapter)
+    _save_state({"auto_start": False, "quotex_credentials": {}})
     await manager.broadcast(await snapshot("logout"))
     return {"success": True, "mode": "PAPER"}
 
 @app.get("/api/v1/auth/session")
 async def session():
-    return {"mode": getattr(adapter, "mode", "UNKNOWN"), "connected": getattr(adapter, "connected", True)}
+    st = _load_state()
+    return {"mode": getattr(adapter, "mode", "UNKNOWN"), "connected": getattr(adapter, "connected", True), "auto_start": bool(st.get("auto_start")), "server_persistent": bool(st.get("quotex_credentials"))}
 
 @app.post("/api/v1/mode/{mode}")
 async def switch_mode(mode: str):
@@ -229,6 +294,7 @@ async def start_bot(config: BotConfig):
     try:
         config = await resolve_symbol(config)
         await bot.start(config)
+        _save_state({"auto_start": True, "bot_config": config.model_dump()})
         balance = await adapter.get_balance()
         send_bot_started(balance, config)
         await manager.broadcast(await snapshot("bot_started"))
@@ -246,6 +312,7 @@ async def stop_after_current():
 async def stop_bot():
     cfg = bot.config
     await bot.stop()
+    _save_state({"auto_start": False})
     balance = await adapter.get_balance()
     send_bot_stopped(balance, cfg)
     await manager.broadcast(await snapshot("bot_stopped"))
