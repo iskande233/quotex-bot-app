@@ -74,10 +74,10 @@ class TradingBot:
                 await asyncio.sleep(5)
 
     async def _risk_limit_reached(self) -> bool:
-        if self.config.take_profit > 0 and self.session_pnl >= self.config.take_profit:
+        if self.config.take_profit_enabled and self.config.take_profit > 0 and self.session_pnl >= self.config.take_profit:
             await self._auto_stop(f"تحقق هدف الربح +{self.config.take_profit}$")
             return True
-        if self.config.stop_loss > 0 and self.session_pnl <= -abs(self.config.stop_loss):
+        if self.config.stop_loss_enabled and self.config.stop_loss > 0 and self.session_pnl <= -abs(self.config.stop_loss):
             await self._auto_stop(f"تجاوز حد الخسارة -{self.config.stop_loss}$")
             return True
         if self.consecutive_losses >= self.config.max_consecutive_losses:
@@ -139,12 +139,13 @@ class TradingBot:
         await self._settle_trade(trade, result_check_time)
         # after result, loop starts again and sends the next signal
 
-    async def _place_trade(self, symbol: str, direction: str, confidence: int, reason: str, entry_time: float, result_check_time: float) -> TradeRecord:
+    async def _place_trade(self, symbol: str, direction: str, confidence: int, reason: str, entry_time: float, result_check_time: float, amount: float | None = None, step: int = 0) -> TradeRecord:
         self.last_analysis = {"status": "PLACING_TRADE", "symbol": symbol, "direction": direction, "confidence": confidence, "reason": reason, "message": f"Sending order {settings.entry_lead_seconds}s before official entry"}
-        req = TradeRequest(symbol=symbol, direction=direction, amount=self.config.investment_amount, duration_seconds=60)
+        req = TradeRequest(symbol=symbol, direction=direction, amount=(amount if amount is not None else self.config.investment_amount), duration_seconds=60)
         trade = await self.adapter.place_trade(req)
         trade.scheduled_entry_time = entry_time
         trade.result_check_time = result_check_time
+        trade.step = step
         self.history.insert(0, trade)
         if self.current_signal:
             self.current_signal["status"] = "OPENED"
@@ -270,9 +271,25 @@ class TradingBot:
             st["wins"] += 1
             self.consecutive_losses = 0
         st["accuracy"] = round((st["wins"] / st["total"]) * 100, 2) if st["total"] else 0
-        self.last_analysis = {"status": "RESULT", "symbol": trade.symbol, "direction": trade.direction, "result": trade.result, "pnl": trade.pnl, "session_pnl": self.session_pnl, "consecutive_losses": self.consecutive_losses}
-        self._log("RESULT", f"{trade.symbol} {trade.result} pnl={round(trade.pnl, 2)} session={round(self.session_pnl, 2)}")
+        self.last_analysis = {"status": "RESULT", "symbol": trade.symbol, "direction": trade.direction, "result": trade.result, "pnl": trade.pnl, "session_pnl": self.session_pnl, "consecutive_losses": self.consecutive_losses, "step": trade.step}
+        self._log("RESULT", f"{trade.symbol} {trade.result} pnl={round(trade.pnl, 2)} session={round(self.session_pnl, 2)} step={trade.step}")
         self.current_signal = None
+        if trade.result == "LOSS" and self.config.martingale_enabled and trade.step < self.config.max_martingale_steps and self.running:
+            if await self._risk_limit_reached():
+                return
+            mg_amount = self.config.investment_amount * (2 ** (trade.step + 1))
+            entry_time = self._next_minute_boundary()
+            execute_time = max(time(), entry_time - settings.entry_lead_seconds)
+            result_check_time = entry_time + 60.0 + settings.result_delay_seconds
+            self.current_signal = {"symbol": trade.symbol, "direction": trade.direction, "confidence": 0, "reason": f"Martingale step {trade.step + 1}", "entry_time": entry_time, "execute_time": execute_time, "expiry_time": entry_time + 60.0, "result_check_time": result_check_time, "amount": mg_amount, "status": "SCHEDULED"}
+            self._log("MARTINGALE", f"{trade.symbol} step={trade.step + 1} amount={mg_amount}")
+            delay = max(0, execute_time - time())
+            while delay > 0 and self.running:
+                await asyncio.sleep(min(0.25, delay)); delay = execute_time - time()
+            if self.running:
+                mg_trade = await self._place_trade(trade.symbol, trade.direction, 0, f"Martingale step {trade.step + 1}", entry_time, result_check_time, amount=mg_amount, step=trade.step + 1)
+                await self._settle_trade(mg_trade, result_check_time)
+            return
         await self._risk_limit_reached()
 
     def _next_minute_boundary(self) -> float:

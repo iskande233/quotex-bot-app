@@ -25,6 +25,7 @@ class TradeRecord(BaseModel):
     result: Result = "PENDING"
     pnl: float = 0.0
     paper: bool = True
+    step: int = 0
 
 class BalanceResponse(BaseModel):
     balance: float
@@ -48,6 +49,10 @@ class BotConfig(BaseModel):
     pair_cooldown_minutes: int = Field(default=5, ge=0, le=120)
     strategy_mode: Literal["safe", "normal", "aggressive"] = "normal"
     auto_blacklist_losses: int = Field(default=3, ge=1, le=10)
+    martingale_enabled: bool = False
+    max_martingale_steps: int = Field(default=1, ge=1, le=2)
+    take_profit_enabled: bool = True
+    stop_loss_enabled: bool = True
 
 class BotStatus(BaseModel):
     running: bool
