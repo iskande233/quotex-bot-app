@@ -1,5 +1,7 @@
 # Railway Deploy
 
+This project uses Docker with Python 3.12 because the selected pyquotex wrapper requires Python >= 3.12.
+
 1. Create a new Railway project.
 2. Connect this GitHub repository.
 3. Railway will use the root `Dockerfile`.
