@@ -25,6 +25,8 @@ class TradingBot:
         self.cooldown_until: float = 0.0
         self.pair_cooldowns: dict[str, float] = {}
         self.logs: list[dict] = []
+        self.pair_stats: dict[str, dict] = {}
+        self.blacklisted_pairs: set[str] = set()
 
     async def start(self, config: BotConfig):
         self.config = config
@@ -34,7 +36,7 @@ class TradingBot:
         self.stop_requested_after_current = False
         self.cooldown_until = 0.0
         self.logs.clear()
-        self._log("START", "Bot started")
+        self._log("START", f"Bot started strategy={self.config.strategy_mode}")
         self.running = True
         await self.adapter.connect()
         if self._task is None or self._task.done():
@@ -165,8 +167,8 @@ class TradingBot:
         otc = [a for a in assets if "OTC" in a.upper() or a.lower().endswith("otc")]
         raw = (otc or assets or ["EURUSD_otc"])
         now = time()
-        filtered = [a for a in raw if self.pair_cooldowns.get(a, 0) <= now]
-        return (filtered or raw)[:12]
+        filtered = [a for a in raw if self.pair_cooldowns.get(a, 0) <= now and a not in self.blacklisted_pairs]
+        return (filtered or [a for a in raw if a not in self.blacklisted_pairs] or raw)[:12]
 
     async def _find_best_setup(self):
         candidates = await self._candidate_assets()
@@ -193,6 +195,10 @@ class TradingBot:
             asset = random.choice(candidates)
             direction = random.choice(["CALL", "PUT"])
             return asset, direction, 50, "startup fallback random OTC"
+        if best is not None:
+            threshold = {"safe": 90, "normal": 70, "aggressive": 0}.get(self.config.strategy_mode, 70)
+            if best[2] < threshold and self.config.strategy_mode != "aggressive":
+                return None
         return best
 
     def _score_asset(self, asset: str, closes: List[float]):
@@ -248,14 +254,22 @@ class TradingBot:
         if hasattr(self.adapter, "session_pnl"):
             self.adapter.session_pnl += trade.pnl
         self.session_pnl += float(trade.pnl or 0)
+        st = self.pair_stats.setdefault(trade.symbol, {"wins": 0, "losses": 0, "total": 0})
+        st["total"] += 1
         if trade.result == "LOSS":
+            st["losses"] += 1
             self.consecutive_losses += 1
             if self.config.cooldown_after_loss_minutes > 0:
                 self.cooldown_until = time() + self.config.cooldown_after_loss_minutes * 60
             if self.config.pair_cooldown_minutes > 0:
                 self.pair_cooldowns[trade.symbol] = time() + self.config.pair_cooldown_minutes * 60
+            if st["losses"] >= self.config.auto_blacklist_losses:
+                self.blacklisted_pairs.add(trade.symbol)
+                self._log("BLACKLIST", f"{trade.symbol} blacklisted after {st['losses']} losses")
         elif trade.result == "WIN":
+            st["wins"] += 1
             self.consecutive_losses = 0
+        st["accuracy"] = round((st["wins"] / st["total"]) * 100, 2) if st["total"] else 0
         self.last_analysis = {"status": "RESULT", "symbol": trade.symbol, "direction": trade.direction, "result": trade.result, "pnl": trade.pnl, "session_pnl": self.session_pnl, "consecutive_losses": self.consecutive_losses}
         self._log("RESULT", f"{trade.symbol} {trade.result} pnl={round(trade.pnl, 2)} session={round(self.session_pnl, 2)}")
         self.current_signal = None
@@ -292,4 +306,4 @@ class TradingBot:
         self.logs = self.logs[:200]
 
     def status(self):
-        return {"running": self.running, "config": self.config.model_dump(), "trades_count": len(self.history), "last_analysis": self.last_analysis, "current_signal": self.current_signal, "session_pnl": self.session_pnl, "consecutive_losses": self.consecutive_losses, "stats": self._stats(), "logs": self.logs[:80], "stop_after_current": self.stop_requested_after_current}
+        return {"running": self.running, "config": self.config.model_dump(), "trades_count": len(self.history), "last_analysis": self.last_analysis, "current_signal": self.current_signal, "session_pnl": self.session_pnl, "consecutive_losses": self.consecutive_losses, "stats": self._stats(), "logs": self.logs[:80], "stop_after_current": self.stop_requested_after_current, "pair_stats": self.pair_stats, "blacklist": list(self.blacklisted_pairs)}
