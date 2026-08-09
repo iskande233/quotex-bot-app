@@ -9,20 +9,8 @@ class ApiService {
     defaultValue: 'https://quotex-bot-app-2.onrender.com',
   );
   static String _baseUrl = defaultBaseUrl;
-  static String get baseUrl => _baseUrl;
-  static String get wsUrl {
-    final clean = _baseUrl.replaceAll(RegExp(r'/+$'), '');
-    if (clean.startsWith('https://')) return clean.replaceFirst('https://', 'wss://') + '/ws';
-    if (clean.startsWith('http://')) return clean.replaceFirst('http://', 'ws://') + '/ws';
-    return 'ws://$clean/ws';
-  }
 
-  static Future<void> init() async {
-    final prefs = await SharedPreferences.getInstance();
-    _baseUrl = prefs.getString('api_base_url')?.trim().replaceAll(RegExp(r'/+$'), '') ?? defaultBaseUrl;
-  }
-
-  static Future<void> setBaseUrl(String url) async {
+  static String _normalizeBaseUrl(String url) {
     var clean = url
         .trim()
         .replaceAll(RegExp(r'\s+'), '')
@@ -34,14 +22,32 @@ class ApiService {
     if (clean.isNotEmpty && !clean.startsWith('http://') && !clean.startsWith('https://')) {
       clean = 'https://$clean';
     }
-    // If user pastes a full API endpoint, keep only scheme + host.
     try {
       final uri = Uri.parse(clean);
       if (uri.hasScheme && uri.host.isNotEmpty) {
-        clean = '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}';
+        return '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}';
       }
     } catch (_) {}
-    _baseUrl = clean.isEmpty ? defaultBaseUrl : clean;
+    return clean.isEmpty ? defaultBaseUrl : clean;
+  }
+
+  static String get baseUrl => _baseUrl;
+  static String get wsUrl {
+    final clean = _normalizeBaseUrl(_baseUrl);
+    if (clean.startsWith('https://')) return clean.replaceFirst('https://', 'wss://') + '/ws';
+    if (clean.startsWith('http://')) return clean.replaceFirst('http://', 'ws://') + '/ws';
+    return 'ws://$clean/ws';
+  }
+
+  static Future<void> init() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('api_base_url');
+    _baseUrl = _normalizeBaseUrl(saved == null || saved.trim().isEmpty ? defaultBaseUrl : saved);
+    await prefs.setString('api_base_url', _baseUrl);
+  }
+
+  static Future<void> setBaseUrl(String url) async {
+    _baseUrl = _normalizeBaseUrl(url);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('api_base_url', _baseUrl);
   }
