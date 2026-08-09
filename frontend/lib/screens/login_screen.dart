@@ -18,7 +18,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final otpFocus = FocusNode();
   String accountType = 'demo';
   bool loading = false;
-  bool rememberEmail = true;
+  bool rememberLogin = true;
   String message = '';
   bool otpRequired = false;
 
@@ -30,8 +30,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _loadRememberedEmail() async {
     final prefs = await SharedPreferences.getInstance();
-    emailCtrl.text = prefs.getString('remember_email') ?? '';
-    rememberEmail = prefs.getBool('remember_email_enabled') ?? true;
+    emailCtrl.text = prefs.getString('remember_email') ?? prefs.getString('q_email') ?? '';
+    passCtrl.text = prefs.getString('q_password') ?? '';
+    accountType = prefs.getString('q_account_type') ?? 'demo';
+    rememberLogin = prefs.getBool('remember_login_enabled') ?? true;
     setState(() {});
   }
 
@@ -45,12 +47,18 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       await ApiService.setBaseUrl(serverCtrl.text);
       final prefs = await SharedPreferences.getInstance();
-      if (rememberEmail) {
+      if (rememberLogin) {
         await prefs.setString('remember_email', emailCtrl.text.trim());
-        await prefs.setBool('remember_email_enabled', true);
+        await prefs.setString('q_email', emailCtrl.text.trim());
+        await prefs.setString('q_password', passCtrl.text);
+        await prefs.setString('q_account_type', accountType);
+        await prefs.setBool('remember_login_enabled', true);
       } else {
         await prefs.remove('remember_email');
-        await prefs.setBool('remember_email_enabled', false);
+        await prefs.remove('q_email');
+        await prefs.remove('q_password');
+        await prefs.remove('q_account_type');
+        await prefs.setBool('remember_login_enabled', false);
       }
       final res = await ApiService.login(email: emailCtrl.text.trim(), password: passCtrl.text, accountType: accountType, otpCode: otpCtrl.text.trim());
       widget.onSuccess((res['mode'] ?? accountType).toString().toUpperCase());
@@ -101,11 +109,11 @@ class _LoginScreenState extends State<LoginScreen> {
                 onChanged: (v) => setState(() => accountType = v ?? 'demo'),
               ),
               SwitchListTile(
-                value: rememberEmail,
+                value: rememberLogin,
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Remember Email'),
-                subtitle: const Text('يحفظ الإيميل فقط ولا يحفظ كلمة السر'),
-                onChanged: (v) => setState(() => rememberEmail = v),
+                title: const Text('Remember Quotex Login'),
+                subtitle: const Text('يحفظ الإيميل وكلمة السر محلياً ويفتح التطبيق مباشرة'),
+                onChanged: (v) => setState(() => rememberLogin = v),
               ),
               const SizedBox(height: 8),
               ElevatedButton.icon(onPressed: loading ? null : _login, icon: const Icon(Icons.login), label: Text(otpRequired ? 'LOGIN WITH OTP' : 'LOGIN')),

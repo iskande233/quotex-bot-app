@@ -182,7 +182,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } catch (e) { setState(() => status = 'Random trade failed: $e'); }
   }
 
-  Future<void> _stop() async { await ApiService.stopBot(); setState(() => status = 'Stopped'); }
+  Future<void> _stop() async { await ApiService.stopBot(); setState(() { status = 'Stopped completely'; running = false; currentSignal = null; }); }
   Future<void> _stopAfterCurrent() async { await ApiService.stopAfterCurrent(); setState(() => status = 'Will stop after current trade'); }
   Future<void> _logout() async { await ApiService.logout(); widget.onLogout(); }
 
@@ -305,6 +305,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     Row(children: [Expanded(child: ElevatedButton.icon(onPressed: running ? null : _start, icon: const Icon(Icons.play_arrow), label: const Text('START BOT'))), const SizedBox(width: 10), Expanded(child: OutlinedButton.icon(onPressed: running ? _stop : null, icon: const Icon(Icons.stop), label: const Text('STOP')))]),
     const SizedBox(height: 10),
     OutlinedButton.icon(onPressed: running ? _stopAfterCurrent : null, icon: const Icon(Icons.pause_circle), label: const Text('إيقاف بعد الصفقة الحالية')),
+    const SizedBox(height: 10),
+    OutlinedButton.icon(onPressed: running ? _stop : null, icon: const Icon(Icons.power_settings_new, color: red), label: const Text('إيقاف فوري كامل للبوت')),
     const SizedBox(height: 10),
     OutlinedButton.icon(onPressed: _randomTradeNow, icon: const Icon(Icons.casino), label: const Text('صفقة عشوائية للتجربة الفورية')),
   ]));
