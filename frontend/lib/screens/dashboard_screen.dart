@@ -24,8 +24,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String selectedAsset = 'AUTO_OTC';
   bool useAnalysis = true;
   String manualDirection = 'CALL';
-  int minConfidence = 80;
-  int analysisSeconds = 20;
+  int minConfidence = 0;
+  int analysisSeconds = 8;
   double takeProfit = 6.0;
   double stopLoss = 3.0;
   int maxConsecutiveLosses = 3;
@@ -125,7 +125,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _start() async {
     try {
-      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 1, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10, useAnalysis: useAnalysis, manualDirection: manualDirection, minConfidence: minConfidence, analysisSeconds: analysisSeconds, takeProfit: takeProfit, stopLoss: stopLoss, maxConsecutiveLosses: maxConsecutiveLosses, cooldownAfterLoss: cooldownAfterLoss, pairCooldown: pairCooldown);
+      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 1, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10, useAnalysis: useAnalysis, manualDirection: manualDirection, minConfidence: 0, analysisSeconds: 8, takeProfit: takeProfit, stopLoss: stopLoss, maxConsecutiveLosses: maxConsecutiveLosses, cooldownAfterLoss: cooldownAfterLoss, pairCooldown: pairCooldown);
       setState(() => status = 'Bot started');
     } catch (e) { setState(() => status = 'Start failed: $e'); }
   }
@@ -254,9 +254,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     const SizedBox(height: 12),
     DropdownButtonFormField<String>(value: assets.contains(selectedAsset) ? selectedAsset : 'AUTO_OTC', decoration: proInput('زوج التداول'), items: assets.map((a) => DropdownMenuItem(value: a, child: Text(a == 'AUTO_OTC' ? 'Auto OTC (المرشح الأقوى)' : a))).toList(), onChanged: (v) => setState(() => selectedAsset = v ?? 'AUTO_OTC')),
     const SizedBox(height: 10),
-    SwitchListTile(value: useAnalysis, contentPadding: EdgeInsets.zero, title: const Text('التحليل الذكي المتقدم'), subtitle: Text(useAnalysis ? 'فحص الأزواج كل $analysisSeconds ثانية لتمرير صفقات ${_rangeText()}' : 'تشغيل مباشر بدون تحليل بالاتجاه المختار'), onChanged: (v) => setState(() => useAnalysis = v)),
+    SwitchListTile(value: useAnalysis, contentPadding: EdgeInsets.zero, title: const Text('التحليل الذكي المتقدم'), subtitle: Text(useAnalysis ? 'يفحص كل أزواج OTC بسرعة ويختار أفضل فرصة تلقائياً' : 'تشغيل مباشر بدون تحليل بالاتجاه المختار'), onChanged: (v) => setState(() => useAnalysis = v)),
     if (!useAnalysis) DropdownButtonFormField<String>(value: manualDirection, decoration: proInput('الاتجاه بدون تحليل'), items: const [DropdownMenuItem(value: 'CALL', child: Text('CALL شراء')), DropdownMenuItem(value: 'PUT', child: Text('PUT بيع'))], onChanged: (v) => setState(() => manualDirection = v ?? 'CALL')),
-    if (useAnalysis) Row(children: [Expanded(child: DropdownButtonFormField<int>(value: minConfidence, decoration: proInput('قوة الإشارة'), items: const [DropdownMenuItem(value: 80, child: Text('80% - 90%')), DropdownMenuItem(value: 90, child: Text('90% - 95%')), DropdownMenuItem(value: 95, child: Text('95%'))], onChanged: (v) => setState(() => minConfidence = v ?? 80))), const SizedBox(width: 10), Expanded(child: DropdownButtonFormField<int>(value: analysisSeconds, decoration: proInput('مدة الفحص'), items: const [DropdownMenuItem(value: 20, child: Text('20s')), DropdownMenuItem(value: 30, child: Text('30s'))], onChanged: (v) => setState(() => analysisSeconds = v ?? 20)))]),
     Row(children: [Expanded(child: TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: proInput('مبلغ الصفقة'))), const SizedBox(width: 10), Expanded(child: TextField(controller: maxTradesCtrl, keyboardType: TextInputType.number, decoration: proInput('Max Trades')))]),
     const SizedBox(height: 12),
     Row(children: [Expanded(child: ElevatedButton.icon(onPressed: running ? null : _start, icon: const Icon(Icons.play_arrow), label: const Text('START BOT'))), const SizedBox(width: 10), Expanded(child: OutlinedButton.icon(onPressed: running ? _stop : null, icon: const Icon(Icons.stop), label: const Text('STOP')))]),
@@ -266,7 +265,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     OutlinedButton.icon(onPressed: _randomTradeNow, icon: const Icon(Icons.casino), label: const Text('صفقة عشوائية للتجربة الفورية')),
   ]));
 
-  String _rangeText() => minConfidence == 80 ? '80-90%' : minConfidence == 90 ? '90-95%' : '95%';
 
   Widget _signalCard() {
     final t = latestTrade;

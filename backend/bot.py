@@ -91,7 +91,7 @@ class TradingBot:
 
     async def _scheduled_trade_cycle(self):
         if self.config.use_analysis:
-            self.last_analysis = {"status": "ANALYZING", "message": f"Scanning assets for {self.config.analysis_seconds}s in {self.config.min_confidence}% range"}
+            self.last_analysis = {"status": "ANALYZING", "message": "Scanning OTC assets with multi-strategy engine"}
             self._log("ANALYZING", self.last_analysis["message"])
             setup = await self._find_best_setup()
             if not setup:
@@ -181,26 +181,19 @@ class TradingBot:
                 except Exception:
                     continue
             await asyncio.sleep(2)
-        lower, upper = self._confidence_range()
         best = None
         for asset in candidates:
             score = self._score_asset(asset, self._series.get(asset, []))
             if score is None:
                 continue
-            confidence = score[2]
-            if not (lower <= confidence < upper):
-                continue
-            if best is None or confidence > best[2]:
+            if best is None or score[2] > best[2]:
                 best = score
+        # If indicators do not have enough data, still open a random OTC trade so START never stays idle.
+        if best is None and candidates:
+            asset = random.choice(candidates)
+            direction = random.choice(["CALL", "PUT"])
+            return asset, direction, 50, "startup fallback random OTC"
         return best
-
-    def _confidence_range(self) -> tuple[int, int]:
-        selected = int(self.config.min_confidence)
-        if selected >= 95:
-            return 95, 101
-        if selected >= 90:
-            return 90, 95
-        return 80, 90
 
     def _score_asset(self, asset: str, closes: List[float]):
         if len(closes) < 4:
@@ -227,7 +220,7 @@ class TradingBot:
             else: sell += 10
         direction = "CALL" if buy >= sell else "PUT"
         confidence = min(95, max(buy, sell))
-        reason = ", ".join(reason_parts[:4]) or "fast price action"
+        reason = ", ".join(reason_parts[:5]) or "multi-strategy fast price action"
         return asset, direction, confidence, reason
 
     async def _settle_trade(self, trade: TradeRecord, result_check_time: float | None = None):
