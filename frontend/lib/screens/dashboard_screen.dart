@@ -14,7 +14,7 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  final amountCtrl = TextEditingController(text: '1');
+  final amountCtrl = TextEditingController(text: '5');
   final maxTradesCtrl = TextEditingController(text: '10');
   WebSocketChannel? channel;
   StreamSubscription? sub;
@@ -31,6 +31,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int maxConsecutiveLosses = 3;
   int cooldownAfterLoss = 2;
   int pairCooldown = 5;
+  String strategyMode = 'normal';
+  int autoBlacklistLosses = 3;
   List<String> assets = ['AUTO_OTC'];
   List<dynamic> history = [];
   List<dynamic> logs = [];
@@ -46,6 +48,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     mode = widget.mode;
+    _loadSavedSettings();
     _connect();
     _loadAssets();
     countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) => setState(() => nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000));
@@ -54,6 +57,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void dispose() {
     countdownTimer?.cancel(); sub?.cancel(); channel?.sink.close(); amountCtrl.dispose(); maxTradesCtrl.dispose(); super.dispose();
+  }
+
+  Future<void> _loadSavedSettings() async {
+    final p = await SharedPreferences.getInstance();
+    amountCtrl.text = p.getString('amount') ?? amountCtrl.text;
+    maxTradesCtrl.text = p.getString('max_trades') ?? maxTradesCtrl.text;
+    takeProfit = p.getDouble('take_profit') ?? takeProfit;
+    stopLoss = p.getDouble('stop_loss') ?? stopLoss;
+    maxConsecutiveLosses = p.getInt('max_consecutive_losses') ?? maxConsecutiveLosses;
+    cooldownAfterLoss = p.getInt('cooldown_after_loss') ?? cooldownAfterLoss;
+    pairCooldown = p.getInt('pair_cooldown') ?? pairCooldown;
+    useAnalysis = p.getBool('use_analysis') ?? useAnalysis;
+    manualDirection = p.getString('manual_direction') ?? manualDirection;
+    selectedAsset = p.getString('selected_asset') ?? selectedAsset;
+    strategyMode = p.getString('strategy_mode') ?? strategyMode;
+    autoBlacklistLosses = p.getInt('auto_blacklist_losses') ?? autoBlacklistLosses;
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _saveSettings() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString('amount', amountCtrl.text);
+    await p.setString('max_trades', maxTradesCtrl.text);
+    await p.setDouble('take_profit', takeProfit);
+    await p.setDouble('stop_loss', stopLoss);
+    await p.setInt('max_consecutive_losses', maxConsecutiveLosses);
+    await p.setInt('cooldown_after_loss', cooldownAfterLoss);
+    await p.setInt('pair_cooldown', pairCooldown);
+    await p.setBool('use_analysis', useAnalysis);
+    await p.setString('manual_direction', manualDirection);
+    await p.setString('selected_asset', selectedAsset);
+    await p.setString('strategy_mode', strategyMode);
+    await p.setInt('auto_blacklist_losses', autoBlacklistLosses);
   }
 
   Future<void> _loadAssets() async {
@@ -91,6 +127,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           maxConsecutiveLosses = (cfg['max_consecutive_losses'] as num?)?.toInt() ?? maxConsecutiveLosses;
           cooldownAfterLoss = (cfg['cooldown_after_loss_minutes'] as num?)?.toInt() ?? cooldownAfterLoss;
           pairCooldown = (cfg['pair_cooldown_minutes'] as num?)?.toInt() ?? pairCooldown;
+          strategyMode = (cfg['strategy_mode'] ?? strategyMode).toString();
+          autoBlacklistLosses = (cfg['auto_blacklist_losses'] as num?)?.toInt() ?? autoBlacklistLosses;
         }
         price = (data['price'] as num?)?.toDouble() ?? price;
         history = (data['history'] as List?) ?? history;
@@ -125,7 +163,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _start() async {
     try {
-      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 1, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10, useAnalysis: useAnalysis, manualDirection: manualDirection, minConfidence: 0, analysisSeconds: 8, takeProfit: takeProfit, stopLoss: stopLoss, maxConsecutiveLosses: maxConsecutiveLosses, cooldownAfterLoss: cooldownAfterLoss, pairCooldown: pairCooldown);
+      await _saveSettings();
+      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 5, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10, useAnalysis: useAnalysis, manualDirection: manualDirection, minConfidence: 0, analysisSeconds: 8, takeProfit: takeProfit, stopLoss: stopLoss, maxConsecutiveLosses: maxConsecutiveLosses, cooldownAfterLoss: cooldownAfterLoss, pairCooldown: pairCooldown, strategyMode: strategyMode, autoBlacklistLosses: autoBlacklistLosses);
       setState(() => status = 'Bot started');
     } catch (e) { setState(() => status = 'Start failed: $e'); }
   }
@@ -160,7 +199,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       maxConsecutiveLosses: maxConsecutiveLosses,
       cooldownAfterLoss: cooldownAfterLoss,
       pairCooldown: pairCooldown,
-      onSave: (server, amount, maxTrades, tp, sl, mcl, cal, pc) async {
+      strategyMode: strategyMode,
+      autoBlacklistLosses: autoBlacklistLosses,
+      onSave: (server, amount, maxTrades, tp, sl, mcl, cal, pc, sm, abl) async {
         await ApiService.setBaseUrl(server);
         amountCtrl.text = amount;
         maxTradesCtrl.text = maxTrades;
@@ -169,6 +210,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         maxConsecutiveLosses = mcl;
         cooldownAfterLoss = cal;
         pairCooldown = pc;
+        strategyMode = sm;
+        autoBlacklistLosses = abl;
+        await _saveSettings();
         setState(() {});
         _connect();
       },
@@ -354,7 +398,8 @@ class LogsScreen extends StatelessWidget {
 class BotSettingsScreen extends StatefulWidget {
   final String serverUrl, amount, maxTrades;
   final double takeProfit, stopLoss;
-  final int maxConsecutiveLosses, cooldownAfterLoss, pairCooldown;
+  final int maxConsecutiveLosses, cooldownAfterLoss, pairCooldown, autoBlacklistLosses;
+  final String strategyMode;
   final Future<void> Function(
     String server,
     String amount,
@@ -364,6 +409,8 @@ class BotSettingsScreen extends StatefulWidget {
     int maxConsecutiveLosses,
     int cooldownAfterLoss,
     int pairCooldown,
+    String strategyMode,
+    int autoBlacklistLosses,
   ) onSave;
 
   const BotSettingsScreen({
@@ -376,6 +423,8 @@ class BotSettingsScreen extends StatefulWidget {
     required this.maxConsecutiveLosses,
     required this.cooldownAfterLoss,
     required this.pairCooldown,
+    required this.strategyMode,
+    required this.autoBlacklistLosses,
     required this.onSave,
   });
 
@@ -392,6 +441,8 @@ class _BotSettingsScreenState extends State<BotSettingsScreen> {
   late int maxLosses = widget.maxConsecutiveLosses;
   late int cooldownLoss = widget.cooldownAfterLoss;
   late int pairCd = widget.pairCooldown;
+  late String strat = widget.strategyMode;
+  late int autoBl = widget.autoBlacklistLosses;
   String message = '';
 
   @override
@@ -473,6 +524,10 @@ class _BotSettingsScreenState extends State<BotSettingsScreen> {
             onChanged: (v) => setState(() => pairCd = v ?? 5),
           )),
         ]),
+        const SizedBox(height: 10),
+        DropdownButtonFormField<String>(value: strat, decoration: proInput('Strategy Mode'), items: const [DropdownMenuItem(value: 'safe', child: Text('Safe')), DropdownMenuItem(value: 'normal', child: Text('Normal')), DropdownMenuItem(value: 'aggressive', child: Text('Aggressive'))], onChanged: (v) => setState(() => strat = v ?? 'normal')),
+        const SizedBox(height: 10),
+        DropdownButtonFormField<int>(value: autoBl, decoration: proInput('Auto Blacklist Losses'), items: const [DropdownMenuItem(value: 2, child: Text('2')), DropdownMenuItem(value: 3, child: Text('3')), DropdownMenuItem(value: 4, child: Text('4')), DropdownMenuItem(value: 5, child: Text('5'))], onChanged: (v) => setState(() => autoBl = v ?? 3)),
         const SizedBox(height: 14),
         ElevatedButton.icon(
           onPressed: () async {
@@ -485,6 +540,8 @@ class _BotSettingsScreenState extends State<BotSettingsScreen> {
               maxLosses,
               cooldownLoss,
               pairCd,
+              strat,
+              autoBl,
             );
             if (context.mounted) Navigator.pop(context);
           },

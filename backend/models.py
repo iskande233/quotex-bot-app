@@ -34,7 +34,7 @@ class BalanceResponse(BaseModel):
 class BotConfig(BaseModel):
     symbol: str = "EURUSD-OTC"
     timeframe: str = "M1"
-    investment_amount: float = 1.0
+    investment_amount: float = 5.0
     max_trades: int = 999
     enabled: bool = False
     use_analysis: bool = True
