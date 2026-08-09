@@ -125,6 +125,10 @@ async def broadcast_loop():
             pass
         await asyncio.sleep(1)
 
+@app.get("/")
+async def root():
+    return {"ok": True, "name": "Quotex Bot App API", "docs": "/docs", "health": "/health"}
+
 @app.get("/health")
 async def health():
     return {"ok": True, "mode": getattr(adapter, "mode", "UNKNOWN")}

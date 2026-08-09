@@ -47,3 +47,7 @@ Codemagic generates Android platform files if missing and outputs installable AP
 - `PAPER_MODE=true` by default.
 - Real trade execution is blocked until a real adapter is implemented and explicitly enabled.
 - Quotex API adapter is an interface/stub to be connected later.
+
+## Server region note
+
+If Quotex login says the service is unavailable in the United States, deploy the backend on a VPS/host in a supported region and set that backend URL in the app Settings. See `docs/SERVER_REGION_AR.md`.

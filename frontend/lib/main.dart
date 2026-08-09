@@ -18,10 +18,26 @@ class QuotexBotApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Quotex Bot App',
+      title: 'LATCHI QUOTEX BOT',
       theme: ThemeData.dark(useMaterial3: true).copyWith(
+        fontFamily: 'Roboto',
         scaffoldBackgroundColor: const Color(0xFF050817),
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber, brightness: Brightness.dark),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFFFFD700),
+            foregroundColor: const Color(0xFF0A0F2C),
+            textStyle: const TextStyle(fontWeight: FontWeight.w800),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            padding: const EdgeInsets.symmetric(vertical: 14),
+          ),
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF0B1024),
+          foregroundColor: Colors.white,
+          centerTitle: false,
+          titleTextStyle: TextStyle(fontFamily: 'Roboto', fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white),
+        ),
       ),
       home: const BotHomePage(),
     );
@@ -195,7 +211,7 @@ class _BotHomePageState extends State<BotHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Quotex Bot App'), actions: [
+      appBar: AppBar(title: const Text('LATCHI QUOTEX BOT'), actions: [
         IconButton(onPressed: _openLogin, icon: const Icon(Icons.login)),
         IconButton(onPressed: _openSettings, icon: const Icon(Icons.settings)),
         IconButton(onPressed: _connectWs, icon: const Icon(Icons.sync)),
@@ -280,7 +296,7 @@ class _LoginPageState extends State<LoginPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('Quotex Login')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
-        const Text('Login creates an in-memory backend session. Use DEMO first. Credentials are not stored by the app.', style: TextStyle(color: Colors.amber)),
+        const Text('Secure in-memory session. Use DEMO first. Credentials are not stored in the app.', style: TextStyle(color: Colors.amber)),
         const SizedBox(height: 16),
         TextField(controller: emailCtrl, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'Quotex Email')),
         TextField(controller: passCtrl, obscureText: true, decoration: const InputDecoration(labelText: 'Quotex Password')),
@@ -352,7 +368,12 @@ class _Panel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: const Color(0xFF111A35), borderRadius: BorderRadius.circular(18), border: Border.all(color: Colors.amber.withOpacity(.5))),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(colors: [Color(0xFF101936), Color(0xFF0B1228)]),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: Colors.amber.withOpacity(.55)),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(.25), blurRadius: 14, offset: const Offset(0, 8))],
+      ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.amber)),
         const SizedBox(height: 8),
