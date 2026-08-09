@@ -8,7 +8,7 @@ from config import settings
 from models import BotConfig, TradeRequest, LoginRequest, LoginResponse
 from quotex_adapter import PaperQuotexAdapter, DemoQuotexAdapter, RealQuotexAdapter, PyQuotexAdapter, QuotexAdapter
 from bot import TradingBot
-from notifier import send_trade_opened, send_trade_result
+from notifier import send_trade_opened, send_trade_result, send_bot_started, send_bot_stopped
 
 app = FastAPI(title="Quotex Bot App API", version="0.3.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -211,12 +211,17 @@ async def resolve_symbol(config: BotConfig) -> BotConfig:
 async def start_bot(config: BotConfig):
     config = await resolve_symbol(config)
     await bot.start(config)
+    balance = await adapter.get_balance()
+    send_bot_started(balance, config)
     await manager.broadcast(await snapshot("bot_started"))
     return {"success": True, "status": bot.status()}
 
 @app.post("/api/v1/bot/stop")
 async def stop_bot():
+    cfg = bot.config
     await bot.stop()
+    balance = await adapter.get_balance()
+    send_bot_stopped(balance, cfg)
     await manager.broadcast(await snapshot("bot_stopped"))
     return {"success": True, "status": bot.status()}
 
