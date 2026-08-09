@@ -19,6 +19,9 @@ class QuotexAdapter(ABC):
     @abstractmethod
     async def latest_price(self, symbol: str) -> float: ...
 
+    async def list_assets(self) -> list[str]:
+        return []
+
 class PaperQuotexAdapter(QuotexAdapter):
     mode = "PAPER"
 
@@ -41,6 +44,13 @@ class PaperQuotexAdapter(QuotexAdapter):
         base += (random() - 0.5) * 0.0012
         self._price_by_symbol[symbol] = base
         return round(base, 6)
+
+    async def list_assets(self) -> list[str]:
+        return [
+            "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "EURJPY-OTC",
+            "AUDUSD-OTC", "USDCAD-OTC", "GBPJPY-OTC", "AUDNZD-OTC",
+            "EURUSD", "GBPUSD", "USDJPY"
+        ]
 
     async def place_trade(self, req: TradeRequest) -> TradeRecord:
         price = await self.latest_price(req.symbol)
@@ -187,6 +197,32 @@ class PyQuotexAdapter(QuotexAdapter):
             except Exception:
                 continue
         raise NotImplementedError("pyquotex get_candles mapping failed for asset " + asset)
+
+    async def list_assets(self) -> list[str]:
+        if not self.connected:
+            await self.connect()
+        for method_name in ("get_all_asset_name", "get_all_assets", "get_assets", "get_available_assets"):
+            method = getattr(self.client, method_name, None)
+            if callable(method):
+                try:
+                    data = await self._maybe_await(method())
+                    if isinstance(data, dict):
+                        data = list(data.keys())
+                    out = []
+                    for item in data or []:
+                        if isinstance(item, (list, tuple)) and item:
+                            name = str(item[0])
+                        elif isinstance(item, dict):
+                            name = str(item.get("name") or item.get("asset") or item.get("symbol") or "")
+                        else:
+                            name = str(item)
+                        if name:
+                            out.append(name.replace("_otc", "-OTC").replace("_OTC", "-OTC"))
+                    if out:
+                        return sorted(set(out))
+                except Exception:
+                    continue
+        return await super().list_assets()
 
     async def place_trade(self, req: TradeRequest) -> TradeRecord:
         if not self.connected:

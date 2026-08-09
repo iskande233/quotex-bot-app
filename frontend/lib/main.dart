@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'services/api_service.dart';
@@ -27,7 +26,7 @@ class QuotexBotApp extends StatelessWidget {
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFFFFD700),
             foregroundColor: const Color(0xFF0A0F2C),
-            textStyle: const TextStyle(fontWeight: FontWeight.w800),
+            textStyle: const TextStyle(fontWeight: FontWeight.w900),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
             padding: const EdgeInsets.symmetric(vertical: 14),
           ),
@@ -35,240 +34,56 @@ class QuotexBotApp extends StatelessWidget {
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF0B1024),
           foregroundColor: Colors.white,
-          centerTitle: false,
-          titleTextStyle: TextStyle(fontFamily: 'Roboto', fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white),
+          titleTextStyle: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.white),
         ),
       ),
-      home: const BotHomePage(),
+      home: const RootScreen(),
     );
   }
 }
 
-class BotHomePage extends StatefulWidget {
-  const BotHomePage({super.key});
+class RootScreen extends StatefulWidget {
+  const RootScreen({super.key});
   @override
-  State<BotHomePage> createState() => _BotHomePageState();
+  State<RootScreen> createState() => _RootScreenState();
 }
 
-class _BotHomePageState extends State<BotHomePage> {
-  final symbolCtrl = TextEditingController(text: 'EURUSD-OTC');
-  final amountCtrl = TextEditingController(text: '1');
-  final maxTradesCtrl = TextEditingController(text: '10');
-  final serverUrlCtrl = TextEditingController(text: ApiService.baseUrl);
-  String timeframe = 'M1';
-  String selectedMode = 'paper';
-  WebSocketChannel? channel;
-  StreamSubscription? sub;
-  bool running = false;
-  bool connecting = false;
-  double balance = 0;
-  double pnl = 0;
-  double price = 0;
-  String mode = 'PAPER';
-  List<dynamic> history = [];
-  List<dynamic> candles = [];
-  String lastMessage = 'Waiting for backend...';
-  final Set<String> notifiedResults = {};
-  final Set<String> notifiedOpened = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _connectWs();
-  }
-
-  @override
-  void dispose() {
-    sub?.cancel();
-    channel?.sink.close();
-    symbolCtrl.dispose();
-    amountCtrl.dispose();
-    maxTradesCtrl.dispose();
-    serverUrlCtrl.dispose();
-    super.dispose();
-  }
-
-  void _connectWs() {
-    setState(() => connecting = true);
-    try {
-      sub?.cancel();
-      channel?.sink.close();
-      channel = ApiService.connectWs();
-      sub = channel!.stream.listen((event) {
-        final data = jsonDecode(event as String) as Map<String, dynamic>;
-        final bal = data['balance'] as Map<String, dynamic>? ?? {};
-        final status = data['status'] as Map<String, dynamic>? ?? {};
-        final eventType = data['type']?.toString() ?? 'snapshot';
-        final trade = data['trade'] as Map<String, dynamic>?;
-        setState(() {
-          balance = (bal['balance'] as num?)?.toDouble() ?? balance;
-          pnl = (bal['session_pnl'] as num?)?.toDouble() ?? pnl;
-          mode = bal['mode']?.toString() ?? mode;
-          selectedMode = mode.toLowerCase();
-          running = status['running'] == true;
-          history = (data['history'] as List?) ?? history;
-          candles = (data['candles'] as List?) ?? candles;
-          price = (data['price'] as num?)?.toDouble() ?? price;
-          lastMessage = 'Live: ${DateTime.now().toIso8601String().substring(11, 19)}';
-          connecting = false;
-        });
-        if (trade != null) _handleTradeEvent(eventType, trade);
-      }, onError: (_) {
-        setState(() { connecting = false; lastMessage = 'WebSocket error. Check backend IP.'; });
-      }, onDone: () {
-        setState(() { connecting = false; lastMessage = 'WebSocket closed.'; });
-      });
-    } catch (e) {
-      setState(() { connecting = false; lastMessage = 'WS failed: $e'; });
-    }
-  }
-
-  void _handleTradeEvent(String eventType, Map<String, dynamic> trade) {
-    final id = trade['id']?.toString() ?? '';
-    if (id.isEmpty) return;
-    if (eventType == 'trade_opened' && notifiedOpened.add(id)) {
-      _showPopup('Trade Executed', '${trade['symbol']} ${trade['direction']} @ ${trade['entry_price']}', Colors.amber);
-    }
-    if (eventType == 'trade_result' && notifiedResults.add(id)) {
-      final result = trade['result']?.toString() ?? 'PENDING';
-      _showPopup('Trade Result: $result', '${trade['symbol']} PnL: ${trade['pnl']}', result == 'WIN' ? Colors.greenAccent : Colors.redAccent);
-    }
-  }
-
-  void _showPopup(String title, String message, Color color) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      backgroundColor: const Color(0xFF111A35),
-      content: Row(children: [
-        Icon(Icons.notifications_active, color: color),
-        const SizedBox(width: 10),
-        Expanded(child: Text('$title\n$message')),
-      ]),
-      duration: const Duration(seconds: 4),
-    ));
-  }
-
-  Future<void> _start() async {
-    try {
-      setState(() => lastMessage = 'Starting bot...');
-      await ApiService.switchMode(selectedMode);
-      await ApiService.startBot(
-        symbol: symbolCtrl.text.trim(),
-        amount: double.tryParse(amountCtrl.text) ?? 1,
-        maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10,
-        timeframe: timeframe,
-      );
-      setState(() => lastMessage = 'Bot started');
-    } catch (e) {
-      setState(() => lastMessage = 'Start error: $e');
-    }
-  }
-
-  Future<void> _stop() async {
-    try {
-      setState(() => lastMessage = 'Stopping bot...');
-      await ApiService.stopBot();
-      setState(() => lastMessage = 'Bot stopped');
-    } catch (e) {
-      setState(() => lastMessage = 'Stop error: $e');
-    }
-  }
-
-  Future<void> _openLogin() async {
-    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LoginPage(
-      initialMode: selectedMode == 'real' ? 'real' : 'demo',
-      onLoginSuccess: (m) {
-        selectedMode = m.toLowerCase();
-        mode = m.toUpperCase();
-        setState(() {});
-        _connectWs();
-      },
-    )));
-  }
-
-  Future<void> _openSettings() async {
-    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => SettingsPage(
-      symbol: symbolCtrl.text,
-      amount: amountCtrl.text,
-      maxTrades: maxTradesCtrl.text,
-      timeframe: timeframe,
-      mode: selectedMode,
-      serverUrl: serverUrlCtrl.text,
-      onSave: (symbol, amount, maxTrades, tf, m, serverUrl) async {
-        symbolCtrl.text = symbol;
-        amountCtrl.text = amount;
-        maxTradesCtrl.text = maxTrades;
-        timeframe = tf;
-        selectedMode = m;
-        serverUrlCtrl.text = serverUrl;
-        await ApiService.setBaseUrl(serverUrl);
-        setState(() {});
-        _connectWs();
-      },
-    )));
-  }
+class _RootScreenState extends State<RootScreen> {
+  bool loggedIn = false;
+  String mode = 'DEMO';
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('LATCHI QUOTEX BOT'), actions: [
-        IconButton(onPressed: _openLogin, icon: const Icon(Icons.login)),
-        IconButton(onPressed: _openSettings, icon: const Icon(Icons.settings)),
-        IconButton(onPressed: _connectWs, icon: const Icon(Icons.sync)),
-      ]),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Row(children: [
-            Expanded(child: ElevatedButton.icon(onPressed: running ? null : _start, icon: const Icon(Icons.play_arrow), label: const Text('START'))),
-            const SizedBox(width: 12),
-            Expanded(child: ElevatedButton.icon(onPressed: running ? _stop : null, icon: const Icon(Icons.stop), label: const Text('STOP'))),
-          ]),
-          const SizedBox(height: 12),
-          _Panel(title: 'Configuration', child: Text('${symbolCtrl.text} | $timeframe | Amount: ${amountCtrl.text} | Max: ${maxTradesCtrl.text} | Mode: ${selectedMode.toUpperCase()}\nBackend: ${ApiService.baseUrl}')),
-          const SizedBox(height: 12),
-          _Panel(title: 'Live Account', child: Text('Mode: $mode\nBalance: ${balance.toStringAsFixed(2)}\nSession PnL: ${pnl.toStringAsFixed(2)}\nBot: ${running ? 'RUNNING' : 'STOPPED'}\n$lastMessage')),
-          const SizedBox(height: 12),
-          _Panel(title: 'M1 Candlestick Chart', child: SizedBox(height: 230, child: _CandleChart(candles: candles, price: price))),
-          const SizedBox(height: 12),
-          _Panel(title: 'Trade History', child: _HistoryList(history: history)),
-        ]),
-      ),
-    );
+    return loggedIn
+        ? BotDashboard(mode: mode, onLogout: () => setState(() { loggedIn = false; mode = 'DEMO'; }))
+        : LoginScreen(onSuccess: (m) => setState(() { loggedIn = true; mode = m; }));
   }
 }
 
-class LoginPage extends StatefulWidget {
-  final String initialMode;
-  final void Function(String mode) onLoginSuccess;
-  const LoginPage({super.key, required this.initialMode, required this.onLoginSuccess});
+class LoginScreen extends StatefulWidget {
+  final void Function(String mode) onSuccess;
+  const LoginScreen({super.key, required this.onSuccess});
   @override
-  State<LoginPage> createState() => _LoginPageState();
+  State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginPageState extends State<LoginPage> {
+class _LoginScreenState extends State<LoginScreen> {
   final emailCtrl = TextEditingController();
   final passCtrl = TextEditingController();
-  late String accountType = widget.initialMode == 'real' ? 'real' : 'demo';
+  final serverCtrl = TextEditingController(text: ApiService.baseUrl);
+  String accountType = 'demo';
   bool loading = false;
   String message = '';
 
   @override
-  void dispose() {
-    emailCtrl.dispose();
-    passCtrl.dispose();
-    super.dispose();
-  }
+  void dispose() { emailCtrl.dispose(); passCtrl.dispose(); serverCtrl.dispose(); super.dispose(); }
 
   Future<void> _login() async {
-    setState(() { loading = true; message = 'Connecting to Quotex...'; });
+    setState(() { loading = true; message = 'Connecting...'; });
     try {
+      await ApiService.setBaseUrl(serverCtrl.text);
       final res = await ApiService.login(email: emailCtrl.text.trim(), password: passCtrl.text, accountType: accountType);
-      final m = res['mode']?.toString() ?? accountType.toUpperCase();
-      widget.onLoginSuccess(m);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Logged in: $m')));
-      Navigator.pop(context);
+      widget.onSuccess((res['mode'] ?? accountType).toString().toUpperCase());
     } catch (e) {
       setState(() { message = 'Login failed: $e'; });
     } finally {
@@ -276,175 +91,179 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  Future<void> _logout() async {
-    setState(() { loading = true; message = 'Logging out...'; });
-    try {
-      await ApiService.logout();
-      widget.onLoginSuccess('paper');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Logged out to PAPER mode')));
-      Navigator.pop(context);
-    } catch (e) {
-      setState(() { message = 'Logout failed: $e'; });
-    } finally {
-      if (mounted) setState(() { loading = false; });
-    }
+  Future<void> _paper() async {
+    await ApiService.logout();
+    widget.onSuccess('PAPER');
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Quotex Login')),
-      body: ListView(padding: const EdgeInsets.all(16), children: [
-        const Text('Secure in-memory session. Use DEMO first. Credentials are not stored in the app.', style: TextStyle(color: Colors.amber)),
-        const SizedBox(height: 16),
-        TextField(controller: emailCtrl, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'Quotex Email')),
-        TextField(controller: passCtrl, obscureText: true, decoration: const InputDecoration(labelText: 'Quotex Password')),
-        const SizedBox(height: 16),
-        DropdownButtonFormField<String>(value: accountType, items: const [
-          DropdownMenuItem(value: 'demo', child: Text('Demo Account')),
-          DropdownMenuItem(value: 'real', child: Text('Real Account')),
-        ], onChanged: (v) => setState(() => accountType = v ?? 'demo'), decoration: const InputDecoration(labelText: 'Account Type')),
+      body: ListView(padding: const EdgeInsets.all(18), children: [
+        _hero('LATCHI QUOTEX BOT', 'Login to Quotex Demo/Real, then run a simple M1 bot.'),
+        const SizedBox(height: 18),
+        _field(serverCtrl, 'Backend URL / Render URL', icon: Icons.cloud),
+        _field(emailCtrl, 'Quotex Email', icon: Icons.email),
+        _field(passCtrl, 'Quotex Password', icon: Icons.lock, password: true),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          value: accountType,
+          decoration: const InputDecoration(labelText: 'Account Type'),
+          items: const [
+            DropdownMenuItem(value: 'demo', child: Text('Demo Account')),
+            DropdownMenuItem(value: 'real', child: Text('Real Account')),
+          ],
+          onChanged: (v) => setState(() => accountType = v ?? 'demo'),
+        ),
         const SizedBox(height: 22),
-        ElevatedButton.icon(onPressed: loading ? null : _login, icon: const Icon(Icons.login), label: const Text('Login')),
+        ElevatedButton.icon(onPressed: loading ? null : _login, icon: const Icon(Icons.login), label: const Text('LOGIN')),
         const SizedBox(height: 10),
-        OutlinedButton.icon(onPressed: loading ? null : _logout, icon: const Icon(Icons.logout), label: const Text('Logout / Paper Mode')),
-        if (message.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 16), child: Text(message)),
+        OutlinedButton.icon(onPressed: loading ? null : _paper, icon: const Icon(Icons.science), label: const Text('Use Paper Mode')),
+        if (message.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 18), child: Text(message, style: const TextStyle(color: Colors.amber))),
       ]),
     );
   }
 }
 
-class SettingsPage extends StatefulWidget {
-  final String symbol, amount, maxTrades, timeframe, mode, serverUrl;
-  final Future<void> Function(String symbol, String amount, String maxTrades, String timeframe, String mode, String serverUrl) onSave;
-  const SettingsPage({super.key, required this.symbol, required this.amount, required this.maxTrades, required this.timeframe, required this.mode, required this.serverUrl, required this.onSave});
+class BotDashboard extends StatefulWidget {
+  final String mode;
+  final VoidCallback onLogout;
+  const BotDashboard({super.key, required this.mode, required this.onLogout});
   @override
-  State<SettingsPage> createState() => _SettingsPageState();
+  State<BotDashboard> createState() => _BotDashboardState();
 }
 
-class _SettingsPageState extends State<SettingsPage> {
-  late final TextEditingController symbolCtrl = TextEditingController(text: widget.symbol);
-  late final TextEditingController amountCtrl = TextEditingController(text: widget.amount);
-  late final TextEditingController maxTradesCtrl = TextEditingController(text: widget.maxTrades);
-  late final TextEditingController serverUrlCtrl = TextEditingController(text: widget.serverUrl);
-  late String timeframe = widget.timeframe;
-  late String mode = widget.mode;
+class _BotDashboardState extends State<BotDashboard> {
+  final amountCtrl = TextEditingController(text: '1');
+  final maxTradesCtrl = TextEditingController(text: '10');
+  WebSocketChannel? channel;
+  StreamSubscription? sub;
+  bool running = false;
+  double balance = 0, pnl = 0, price = 0;
+  String mode = 'DEMO';
+  String selectedAsset = 'AUTO_OTC';
+  List<String> assets = ['AUTO_OTC'];
+  List<dynamic> history = [];
+  Map<String, dynamic>? latestTrade;
+  String status = 'Ready';
+  final Set<String> notified = {};
+
+  @override
+  void initState() { super.initState(); mode = widget.mode; _connect(); _loadAssets(); }
+  @override
+  void dispose() { sub?.cancel(); channel?.sink.close(); amountCtrl.dispose(); maxTradesCtrl.dispose(); super.dispose(); }
+
+  Future<void> _loadAssets() async {
+    try {
+      final res = await ApiService.assets();
+      final otc = ((res['otc'] as List?) ?? []).map((e) => e.toString()).toList();
+      final all = ((res['assets'] as List?) ?? []).map((e) => e.toString()).toList();
+      setState(() { assets = ['AUTO_OTC', ...otc, ...all.where((a) => !otc.contains(a))].toSet().toList(); });
+    } catch (_) {}
+  }
+
+  void _connect() {
+    sub?.cancel(); channel?.sink.close();
+    channel = ApiService.connectWs();
+    sub = channel!.stream.listen((event) {
+      final data = jsonDecode(event as String) as Map<String, dynamic>;
+      final bal = data['balance'] as Map<String, dynamic>? ?? {};
+      final st = data['status'] as Map<String, dynamic>? ?? {};
+      final trade = data['trade'] as Map<String, dynamic>?;
+      setState(() {
+        balance = (bal['balance'] as num?)?.toDouble() ?? balance;
+        pnl = (bal['session_pnl'] as num?)?.toDouble() ?? pnl;
+        mode = bal['mode']?.toString() ?? mode;
+        running = st['running'] == true;
+        price = (data['price'] as num?)?.toDouble() ?? price;
+        history = (data['history'] as List?) ?? history;
+        if (trade != null) latestTrade = trade;
+        status = 'Live ${DateTime.now().toIso8601String().substring(11, 19)}';
+      });
+      if (trade != null) _notify(data['type']?.toString() ?? 'snapshot', trade);
+    }, onError: (e) => setState(() => status = 'Connection error'), onDone: () => setState(() => status = 'Disconnected'));
+  }
+
+  void _notify(String type, Map<String, dynamic> t) {
+    final id = t['id']?.toString() ?? '';
+    if (id.isEmpty || !notified.add('$type$id')) return;
+    if (type == 'trade_opened') _snack('تم دخول الصفقة', '${t['symbol']} ${t['direction']} @ ${t['entry_price']}', Colors.amber);
+    if (type == 'trade_result') {
+      final r = t['result']?.toString() ?? 'PENDING';
+      _snack('نتيجة الصفقة: $r', '${t['symbol']} | PnL: ${t['pnl']}', r == 'WIN' ? Colors.greenAccent : Colors.redAccent);
+    }
+  }
+
+  void _snack(String title, String msg, Color c) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: const Color(0xFF111A35), content: Row(children: [Icon(Icons.notifications_active, color: c), const SizedBox(width: 10), Expanded(child: Text('$title\n$msg'))])));
+  }
+
+  Future<void> _start() async {
+    try {
+      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 1, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10);
+      setState(() => status = 'Bot started');
+    } catch (e) { setState(() => status = 'Start failed: $e'); }
+  }
+
+  Future<void> _stop() async { await ApiService.stopBot(); setState(() => status = 'Stopped'); }
+  Future<void> _logout() async { await ApiService.logout(); widget.onLogout(); }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(title: const Text('LATCHI BOT'), actions: [
+        IconButton(onPressed: _logout, icon: const Icon(Icons.logout)),
+        IconButton(onPressed: () { _connect(); _loadAssets(); }, icon: const Icon(Icons.refresh)),
+      ]),
       body: ListView(padding: const EdgeInsets.all(16), children: [
-        TextField(controller: symbolCtrl, decoration: const InputDecoration(labelText: 'Symbol')),
-        TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Investment Amount')),
-        TextField(controller: maxTradesCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Max Trades')),
-        TextField(controller: serverUrlCtrl, keyboardType: TextInputType.url, decoration: const InputDecoration(labelText: 'Online Backend URL / Railway URL')),
-        const SizedBox(height: 16),
-        DropdownButtonFormField<String>(value: timeframe, items: const [DropdownMenuItem(value: 'M1', child: Text('M1'))], onChanged: (v) => setState(() => timeframe = v ?? 'M1'), decoration: const InputDecoration(labelText: 'Timeframe')),
-        const SizedBox(height: 16),
-        DropdownButtonFormField<String>(value: mode, items: const [
-          DropdownMenuItem(value: 'paper', child: Text('Paper Mode')),
-          DropdownMenuItem(value: 'demo', child: Text('Demo Account')),
-          DropdownMenuItem(value: 'real', child: Text('Real Adapter Placeholder')),
-        ], onChanged: (v) => setState(() => mode = v ?? 'paper'), decoration: const InputDecoration(labelText: 'Execution Mode')),
-        const SizedBox(height: 22),
-        ElevatedButton.icon(onPressed: () async {
-          await widget.onSave(symbolCtrl.text, amountCtrl.text, maxTradesCtrl.text, timeframe, mode, serverUrlCtrl.text);
-          if (context.mounted) Navigator.pop(context);
-        }, icon: const Icon(Icons.save), label: const Text('Save Settings')),
-        const SizedBox(height: 14),
-        const Text('Safety: Paper/Demo are simulated. Real adapter requires a compliant user-owned Quotex session integration.', style: TextStyle(color: Colors.amber)),
+        _accountCard(),
+        const SizedBox(height: 12),
+        _controls(),
+        const SizedBox(height: 12),
+        _signalCard(),
+        const SizedBox(height: 12),
+        _history(),
       ]),
     );
   }
-}
 
-class _Panel extends StatelessWidget {
-  final String title;
-  final Widget child;
-  const _Panel({required this.title, required this.child});
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [Color(0xFF101936), Color(0xFF0B1228)]),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.amber.withOpacity(.55)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(.25), blurRadius: 14, offset: const Offset(0, 8))],
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.amber)),
-        const SizedBox(height: 8),
-        child,
-      ]),
-    );
+  Widget _accountCard() => _panel('Live Account', 'Mode: $mode\nBalance: ${balance.toStringAsFixed(2)}\nSession PnL: ${pnl.toStringAsFixed(2)}\nPrice: ${price.toStringAsFixed(6)}\n$status');
+
+  Widget _controls() => Container(
+    padding: const EdgeInsets.all(14), decoration: _box(), child: Column(children: [
+      DropdownButtonFormField<String>(value: assets.contains(selectedAsset) ? selectedAsset : 'AUTO_OTC', decoration: const InputDecoration(labelText: 'زوج التداول'), items: assets.map((a) => DropdownMenuItem(value: a, child: Text(a == 'AUTO_OTC' ? 'Auto OTC' : a))).toList(), onChanged: (v) => setState(() => selectedAsset = v ?? 'AUTO_OTC')),
+      Row(children: [Expanded(child: TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'المبلغ'))), const SizedBox(width: 12), Expanded(child: TextField(controller: maxTradesCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Max')))]),
+      const SizedBox(height: 14),
+      Row(children: [Expanded(child: ElevatedButton.icon(onPressed: running ? null : _start, icon: const Icon(Icons.play_arrow), label: const Text('START'))), const SizedBox(width: 10), Expanded(child: ElevatedButton.icon(onPressed: running ? _stop : null, icon: const Icon(Icons.stop), label: const Text('STOP')))]),
+    ]));
+
+  Widget _signalCard() {
+    final t = latestTrade;
+    if (t == null) return _panel('Signal', 'لا توجد صفقة حالياً. اضغط START للبدء.');
+    final result = t['result']?.toString() ?? 'PENDING';
+    final dir = t['direction']?.toString() ?? '';
+    return Container(padding: const EdgeInsets.all(18), decoration: _box(stroke: result == 'WIN' ? Colors.greenAccent : result == 'LOSS' ? Colors.redAccent : Colors.amber), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const Text('💲 صفقة جديدة 💲', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.amber)),
+      const Divider(color: Colors.white38),
+      Text('📊 الزوج: ${t['symbol']}'),
+      const Text('⏱️ المدة: M1'),
+      Text('💰 المبلغ: ${t['amount']}'),
+      Text(dir == 'CALL' ? '📈 الاتجاه: CALL 🔼 (شراء)' : '📉 الاتجاه: PUT 🔻 (بيع)'),
+      const Divider(color: Colors.white38),
+      Text(result == 'PENDING' ? '⏳ النتيجة: قيد الانتظار' : (result == 'WIN' ? '🟢💰 ربح مباشر WIN ✅' : '💔 خسارة LOSS ❌'), textAlign: TextAlign.center, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: result == 'WIN' ? Colors.greenAccent : result == 'LOSS' ? Colors.redAccent : Colors.amber)),
+    ]));
   }
+
+  Widget _history() => Container(padding: const EdgeInsets.all(14), decoration: _box(), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    const Text('Trade History', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.amber)),
+    if (history.isEmpty) const Padding(padding: EdgeInsets.all(12), child: Text('No trades yet')),
+    ...history.take(12).map((e) { final m = e as Map<String, dynamic>; final r = m['result']?.toString() ?? 'PENDING'; return ListTile(dense: true, title: Text('${m['symbol']} ${m['direction']}'), subtitle: Text('Entry ${m['entry_price']} | Exit ${m['exit_price']}'), trailing: Text(r, style: TextStyle(color: r == 'WIN' ? Colors.greenAccent : r == 'LOSS' ? Colors.redAccent : Colors.amber, fontWeight: FontWeight.bold))); }),
+  ]));
 }
 
-class _CandleChart extends StatelessWidget {
-  final List<dynamic> candles;
-  final double price;
-  const _CandleChart({required this.candles, required this.price});
-  @override
-  Widget build(BuildContext context) => CustomPaint(painter: _CandlePainter(candles), child: Align(alignment: Alignment.topRight, child: Text('Live: ${price.toStringAsFixed(6)}')));
-}
-
-class _CandlePainter extends CustomPainter {
-  final List<dynamic> candles;
-  _CandlePainter(this.candles);
-  @override
-  void paint(Canvas canvas, Size size) {
-    final grid = Paint()..color = Colors.white.withOpacity(.08)..strokeWidth = 1;
-    for (var i = 1; i < 4; i++) canvas.drawLine(Offset(0, size.height * i / 4), Offset(size.width, size.height * i / 4), grid);
-    if (candles.isEmpty) return;
-    final list = candles.cast<Map>().toList();
-    final highs = list.map((e) => (e['high'] as num).toDouble());
-    final lows = list.map((e) => (e['low'] as num).toDouble());
-    final maxP = highs.reduce(math.max);
-    final minP = lows.reduce(math.min);
-    final span = (maxP - minP).abs() < 0.000001 ? 1.0 : maxP - minP;
-    double y(double p) => size.height - ((p - minP) / span * size.height);
-    final w = size.width / list.length;
-    for (var i = 0; i < list.length; i++) {
-      final c = list[i];
-      final o = (c['open'] as num).toDouble();
-      final h = (c['high'] as num).toDouble();
-      final l = (c['low'] as num).toDouble();
-      final cl = (c['close'] as num).toDouble();
-      final up = cl >= o;
-      final paint = Paint()
-        ..color = up ? Colors.greenAccent : Colors.redAccent
-        ..strokeWidth = 2;
-      final x = i * w + w / 2;
-      canvas.drawLine(Offset(x, y(h)), Offset(x, y(l)), paint);
-      final bodyTop = y(math.max(o, cl));
-      final bodyBottom = y(math.min(o, cl));
-      final rect = Rect.fromCenter(center: Offset(x, (bodyTop + bodyBottom) / 2), width: (w * .62).clamp(3, 16).toDouble(), height: math.max(3, (bodyBottom - bodyTop).abs()));
-      canvas.drawRect(rect, paint);
-    }
-  }
-  @override
-  bool shouldRepaint(covariant _CandlePainter oldDelegate) => oldDelegate.candles != candles;
-}
-
-class _HistoryList extends StatelessWidget {
-  final List<dynamic> history;
-  const _HistoryList({required this.history});
-  @override
-  Widget build(BuildContext context) {
-    if (history.isEmpty) return const Text('No trades yet');
-    return Column(children: history.take(20).map((e) {
-      final m = e as Map<String, dynamic>;
-      final result = m['result']?.toString() ?? 'PENDING';
-      final color = result == 'WIN' ? Colors.greenAccent : result == 'LOSS' ? Colors.redAccent : Colors.amber;
-      return ListTile(
-        dense: true,
-        title: Text('${m['symbol']}  ${m['direction']}'),
-        subtitle: Text('Entry: ${m['entry_price']} | Exit: ${m['exit_price']} | PnL: ${m['pnl']}'),
-        trailing: Text(result, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
-      );
-    }).toList());
-  }
-}
+Widget _hero(String title, String subtitle) => Container(padding: const EdgeInsets.all(18), decoration: _box(), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.amber)), const SizedBox(height: 6), Text(subtitle)]));
+Widget _field(TextEditingController c, String label, {IconData? icon, bool password = false}) => Padding(padding: const EdgeInsets.only(bottom: 12), child: TextField(controller: c, obscureText: password, decoration: InputDecoration(labelText: label, prefixIcon: icon == null ? null : Icon(icon))));
+Widget _panel(String title, String body) => Container(padding: const EdgeInsets.all(16), decoration: _box(), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.amber)), const SizedBox(height: 8), Text(body)]));
+BoxDecoration _box({Color stroke = Colors.amber}) => BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF101936), Color(0xFF0B1228)]), borderRadius: BorderRadius.circular(22), border: Border.all(color: stroke.withOpacity(.65)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(.25), blurRadius: 14, offset: const Offset(0, 8))]);

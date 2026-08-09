@@ -193,8 +193,17 @@ async def switch_mode(mode: str):
     await manager.broadcast(await snapshot("mode_changed", {"mode": getattr(adapter, "mode", "UNKNOWN")}))
     return {"success": True, "mode": getattr(adapter, "mode", "UNKNOWN")}
 
+async def resolve_symbol(config: BotConfig) -> BotConfig:
+    if config.symbol.strip().upper() not in {"AUTO", "AUTO_OTC", "OTC_AUTO"}:
+        return config
+    assets = await adapter.list_assets()
+    otc = [a for a in assets if "OTC" in a.upper()]
+    config.symbol = (otc or assets or ["EURUSD-OTC"])[0]
+    return config
+
 @app.post("/api/v1/bot/start")
 async def start_bot(config: BotConfig):
+    config = await resolve_symbol(config)
     await bot.start(config)
     await manager.broadcast(await snapshot("bot_started"))
     return {"success": True, "status": bot.status()}
@@ -222,6 +231,11 @@ async def place_trade(req: TradeRequest):
 @app.get("/api/v1/balance")
 async def balance():
     return await adapter.get_balance()
+
+@app.get("/api/v1/assets")
+async def assets():
+    items = await adapter.list_assets()
+    return {"assets": items, "otc": [a for a in items if "OTC" in a.upper()]}
 
 @app.get("/api/v1/history")
 async def history():
