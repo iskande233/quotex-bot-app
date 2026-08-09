@@ -6,16 +6,16 @@ from models import TradeRequest, TradeRecord, BalanceResponse
 
 # Official OTC universe requested for the bot. Keep lowercase pyquotex asset format.
 OTC_PAIRS = [
-    "usd_inrotc", "usd_jpyotc", "usd_ngnotc", "usd_pkrotc",
-    "gbp_nzdotc", "aud_nzdotc", "gbp_chfotc", "eur_nzdotc",
-    "usd_zarotc", "nzd_usdotc", "usd_cadotc", "nzd_jpyotc",
-    "gbp_usdotc", "aud_cadotc", "aud_chfotc", "eur_usdotc",
-    "usd_dzdotc", "chf_jpyotc", "eur_chfotc", "gbp_audotc",
-    "aud_jpyotc", "eur_audotc", "nzd_chfotc", "cad_chfotc",
-    "aud_usdotc", "eur_cadotc", "nzd_cadotc", "usd_arsotc",
-    "usd_brlotc", "usd_mxnotc", "eur_gbpotc", "eur_jpyotc",
-    "gbp_jpyotc", "usd_chfotc", "usd_egpotc", "usd_idrotc",
-    "usd_phpotc",
+    "USDINR_otc", "USDJPY_otc", "USDNGN_otc", "USDPKR_otc",
+    "GBPNZD_otc", "AUDNZD_otc", "GBPCHF_otc", "EURNZD_otc",
+    "USDZAR_otc", "NZDUSD_otc", "USDCAD_otc", "NZDJPY_otc",
+    "GBPUSD_otc", "AUDCAD_otc", "AUDCHF_otc", "EURUSD_otc",
+    "USDDZD_otc", "CHFJPY_otc", "EURCHF_otc", "GBPAUD_otc",
+    "AUDJPY_otc", "EURAUD_otc", "NZDCHF_otc", "CADCHF_otc",
+    "AUDUSD_otc", "EURCAD_otc", "NZDCAD_otc", "USDARS_otc",
+    "USDBRL_otc", "USDMXN_otc", "EURGBP_otc", "EURJPY_otc",
+    "GBPJPY_otc", "USDCHF_otc", "USDEGP_otc", "USDIDR_otc",
+    "USDPHP_otc",
 ]
 
 class QuotexAdapter(ABC):
@@ -147,43 +147,39 @@ class PyQuotexAdapter(QuotexAdapter):
         return value
 
     def _asset(self, symbol: str) -> str:
-        """Normalize all UI/API symbols to the exact pyquotex OTC asset format.
+        """Normalize symbols to pyquotex format exactly as expected by the wrapper.
 
-        Required format examples from the platform:
-            eur_usdotc, gbp_jpyotc, aud_nzdotc
+        Correct pyquotex OTC format:
+            EURUSD_otc, GBPJPY_otc, AUDNZD_otc
 
         Accepted inputs:
-            EUR/USD OTC, EURUSD-OTC, EURUSD_otc, eur_usdotc, AUTO_OTC
+            EURUSD_otc, EURUSD-OTC, EUR/USD OTC, eur_usdotc, EURUSD
         """
-        raw = (symbol or "").strip().lower()
-        if raw in {"auto", "auto_otc", "otc_auto"}:
+        raw = (symbol or "").strip()
+        low = raw.lower()
+        if low in {"auto", "auto_otc", "otc_auto"}:
             return OTC_PAIRS[0]
+
         clean = raw.replace(" ", "").replace("/", "").replace("-", "_")
-        # Already in official format.
-        if clean in OTC_PAIRS:
-            return clean
-        # eurusd_otc -> eur_usdotc
-        if clean.endswith("_otc") and len(clean) >= 10:
-            base = clean[:-4].replace("_", "")
-            if len(base) == 6:
-                candidate = f"{base[:3]}_{base[3:]}otc"
-                if candidate in OTC_PAIRS:
-                    return candidate
-                return candidate
-        # eurusdotc -> eur_usdotc
-        if clean.endswith("otc"):
-            base = clean[:-3].replace("_", "")
-            if len(base) == 6:
-                candidate = f"{base[:3]}_{base[3:]}otc"
-                if candidate in OTC_PAIRS:
-                    return candidate
-                return candidate
-        # eurusd -> eur_usdotc (force OTC; bot does not trade real pairs).
-        base = clean.replace("_", "")
+        low_clean = clean.lower()
+
+        # Already correct: EURUSD_otc / eurusd_otc
+        if low_clean.endswith("_otc"):
+            base = clean[:-4].replace("_", "").upper()
+            candidate = f"{base}_otc"
+            return candidate
+
+        # Internal/wrong form previously used: eur_usdotc -> EURUSD_otc
+        if low_clean.endswith("otc"):
+            base = clean[:-3].replace("_", "").upper()
+            candidate = f"{base}_otc"
+            return candidate
+
+        # Real pair typed manually: EURUSD -> force OTC, because this bot trades OTC only.
+        base = clean.replace("_", "").upper()
         if len(base) == 6:
-            candidate = f"{base[:3]}_{base[3:]}otc"
-            if candidate in OTC_PAIRS:
-                return candidate
+            return f"{base}_otc"
+
         return clean
 
     async def connect(self) -> None:
