@@ -31,7 +31,7 @@ http://localhost:8000/docs
 
 ## Online mode
 
-The Flutter app now supports a runtime backend URL. Open Settings and set your Railway URL, e.g. `https://your-app.up.railway.app`. The app automatically derives WebSocket as `wss://your-app.up.railway.app/ws`.
+The Flutter app default backend is now `https://quotex-bot-app-1.onrender.com`. You can still change it at runtime from Settings. The app automatically derives WebSocket as `wss://quotex-bot-app-1.onrender.com/ws`.
 
 Codemagic generates Android platform files if missing and outputs installable APK artifacts.
 
