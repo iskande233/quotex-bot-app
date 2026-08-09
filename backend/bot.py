@@ -47,7 +47,7 @@ class TradingBot:
 
     async def _execute_trade_cycle(self):
         if self.config.use_analysis:
-            self.last_analysis = {"status": "ANALYZING", "message": f"Scanning assets for {self.config.analysis_seconds}s at +{self.config.min_confidence}%"}
+            self.last_analysis = {"status": "ANALYZING", "message": f"Scanning assets for {self.config.analysis_seconds}s at {self.config.min_confidence}%+"}
             setup = await self._find_best_setup()
             if not setup:
                 self.last_analysis = {"status": "NO_SIGNAL", "message": "No setup above confidence threshold"}
@@ -151,7 +151,7 @@ class TradingBot:
             if closes[-1] >= closes[-2]: buy += 10
             else: sell += 10
         direction = "CALL" if buy >= sell else "PUT"
-        confidence = min(96, max(buy, sell))
+        confidence = min(95, max(buy, sell))
         reason = ", ".join(reason_parts[:4]) or "fast price action"
         return asset, direction, confidence, reason
 

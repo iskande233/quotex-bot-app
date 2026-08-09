@@ -146,7 +146,7 @@ class _BotDashboardState extends State<BotDashboard> {
   String selectedAsset = 'AUTO_OTC';
   bool useAnalysis = true;
   String manualDirection = 'CALL';
-  int minConfidence = 80;
+  int minConfidence = 81;
   int analysisSeconds = 20;
   List<String> assets = ['AUTO_OTC'];
   List<dynamic> history = [];
@@ -253,7 +253,7 @@ class _BotDashboardState extends State<BotDashboard> {
     );
   }
 
-  Widget _accountCard() => _panel('Live Account', 'Mode: $mode\nBalance: ${balance.toStringAsFixed(2)}\nSession PnL: ${pnl.toStringAsFixed(2)}\nPrice: ${price.toStringAsFixed(6)}\nMode: ${useAnalysis ? 'Analysis +$minConfidence%' : 'Direct $manualDirection'}\n$status');
+  Widget _accountCard() => _panel('Live Account', 'Mode: $mode\nBalance: ${balance.toStringAsFixed(2)}\nSession PnL: ${pnl.toStringAsFixed(2)}\nPrice: ${price.toStringAsFixed(6)}\nMode: ${useAnalysis ? 'Analysis $minConfidence%+' : 'Direct $manualDirection'}\n$status');
 
   Widget _controls() => Container(
     padding: const EdgeInsets.all(14), decoration: _box(), child: Column(children: [
@@ -263,11 +263,11 @@ class _BotDashboardState extends State<BotDashboard> {
         value: useAnalysis,
         contentPadding: EdgeInsets.zero,
         title: const Text('تشغيل بالتحليل القوي'),
-        subtitle: Text(useAnalysis ? 'يفحص الأزواج حتى $analysisSeconds ثانية ويختار صفقة بثقة +$minConfidence%' : 'تشغيل مباشر بدون تحليل بالاتجاه المختار'),
+        subtitle: Text(useAnalysis ? 'يفحص الأزواج حتى $analysisSeconds ثانية ويختار صفقة بثقة $minConfidence%+' : 'تشغيل مباشر بدون تحليل بالاتجاه المختار'),
         onChanged: (v) => setState(() => useAnalysis = v),
       ),
       if (!useAnalysis) DropdownButtonFormField<String>(value: manualDirection, decoration: const InputDecoration(labelText: 'الاتجاه بدون تحليل'), items: const [DropdownMenuItem(value: 'CALL', child: Text('CALL شراء')), DropdownMenuItem(value: 'PUT', child: Text('PUT بيع'))], onChanged: (v) => setState(() => manualDirection = v ?? 'CALL')),
-      if (useAnalysis) Row(children: [Expanded(child: DropdownButtonFormField<int>(value: minConfidence, decoration: const InputDecoration(labelText: 'قوة الإشارة'), items: const [DropdownMenuItem(value: 80, child: Text('80%')), DropdownMenuItem(value: 85, child: Text('85%')), DropdownMenuItem(value: 90, child: Text('90%'))], onChanged: (v) => setState(() => minConfidence = v ?? 80))), const SizedBox(width: 12), Expanded(child: DropdownButtonFormField<int>(value: analysisSeconds, decoration: const InputDecoration(labelText: 'مدة التحليل'), items: const [DropdownMenuItem(value: 20, child: Text('20s')), DropdownMenuItem(value: 30, child: Text('30s')), DropdownMenuItem(value: 45, child: Text('45s'))], onChanged: (v) => setState(() => analysisSeconds = v ?? 20)))]),
+      if (useAnalysis) Row(children: [Expanded(child: DropdownButtonFormField<int>(value: minConfidence, decoration: const InputDecoration(labelText: 'قوة الإشارة'), items: const [DropdownMenuItem(value: 81, child: Text('81%+')), DropdownMenuItem(value: 85, child: Text('85%+')), DropdownMenuItem(value: 90, child: Text('90%+')), DropdownMenuItem(value: 95, child: Text('95%'))], onChanged: (v) => setState(() => minConfidence = v ?? 81))), const SizedBox(width: 12), Expanded(child: DropdownButtonFormField<int>(value: analysisSeconds, decoration: const InputDecoration(labelText: 'مدة التحليل'), items: const [DropdownMenuItem(value: 20, child: Text('20s')), DropdownMenuItem(value: 30, child: Text('30s')), DropdownMenuItem(value: 45, child: Text('45s'))], onChanged: (v) => setState(() => analysisSeconds = v ?? 20)))]),
       Row(children: [Expanded(child: TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'المبلغ'))), const SizedBox(width: 12), Expanded(child: TextField(controller: maxTradesCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Max')))]),
       const SizedBox(height: 14),
       Row(children: [Expanded(child: ElevatedButton.icon(onPressed: running ? null : _start, icon: const Icon(Icons.play_arrow), label: const Text('START'))), const SizedBox(width: 10), Expanded(child: ElevatedButton.icon(onPressed: running ? _stop : null, icon: const Icon(Icons.stop), label: const Text('STOP')))]),
