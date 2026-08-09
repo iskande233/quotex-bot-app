@@ -15,8 +15,8 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  final amountCtrl = TextEditingController(text: '5');
-  final maxTradesCtrl = TextEditingController(text: '10');
+  final amountCtrl = TextEditingController(text: '1');
+  final maxTradesCtrl = TextEditingController(text: '5');
   WebSocketChannel? channel;
   StreamSubscription? sub;
   bool running = false;
@@ -25,12 +25,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String selectedAsset = 'AUTO_OTC';
   bool useAnalysis = true;
   String manualDirection = 'CALL';
-  int minConfidence = 0;
-  int analysisSeconds = 8;
+  int minConfidence = 90;
+  int analysisSeconds = 45;
   double takeProfit = 6.0;
   double stopLoss = 3.0;
-  int maxConsecutiveLosses = 3;
-  int cooldownAfterLoss = 2;
+  int maxConsecutiveLosses = 2;
+  int cooldownAfterLoss = 15;
   int pairCooldown = 5;
   String strategyMode = 'normal';
   int autoBlacklistLosses = 3;
@@ -165,7 +165,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _start() async {
     try {
       await _saveSettings();
-      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 5, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10, useAnalysis: useAnalysis, manualDirection: manualDirection, minConfidence: 0, analysisSeconds: 8, takeProfit: takeProfit, stopLoss: stopLoss, maxConsecutiveLosses: maxConsecutiveLosses, cooldownAfterLoss: cooldownAfterLoss, pairCooldown: pairCooldown, strategyMode: strategyMode, autoBlacklistLosses: autoBlacklistLosses);
+      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 5, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10, useAnalysis: useAnalysis, manualDirection: manualDirection, minConfidence: minConfidence, analysisSeconds: analysisSeconds, takeProfit: takeProfit, stopLoss: stopLoss, maxConsecutiveLosses: maxConsecutiveLosses, cooldownAfterLoss: cooldownAfterLoss, pairCooldown: pairCooldown, strategyMode: strategyMode, autoBlacklistLosses: autoBlacklistLosses);
       setState(() => status = 'Bot started');
     } catch (e) { setState(() => status = 'Start failed: $e'); }
   }
@@ -249,7 +249,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('LATCHI BOT', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)), Text('Quotex M1 Pro Engine', style: TextStyle(color: cyan, fontSize: 10))])),
       IconButton(onPressed: _openLogs, icon: const Icon(Icons.list_alt)),
       IconButton(onPressed: _openSettings, icon: const Icon(Icons.settings)),
-      IconButton(onPressed: _connect, icon: const Icon(Icons.refresh)),
       IconButton(onPressed: _logout, icon: const Icon(Icons.logout)),
     ]),
   );
@@ -514,7 +513,7 @@ class _BotSettingsScreenState extends State<BotSettingsScreen> {
           Expanded(child: DropdownButtonFormField<int>(
             value: cooldownLoss,
             decoration: proInput('Cooldown After Loss'),
-            items: const [0, 1, 2, 3, 5].map((v) => DropdownMenuItem(value: v, child: Text('${v}m'))).toList(),
+            items: const [0, 2, 5, 10, 15].map((v) => DropdownMenuItem(value: v, child: Text('${v}m'))).toList(),
             onChanged: (v) => setState(() => cooldownLoss = v ?? 2),
           )),
           const SizedBox(width: 10),

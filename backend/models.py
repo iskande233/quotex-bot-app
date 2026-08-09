@@ -35,17 +35,17 @@ class BalanceResponse(BaseModel):
 class BotConfig(BaseModel):
     symbol: str = "EURUSD-OTC"
     timeframe: str = "M1"
-    investment_amount: float = 5.0
-    max_trades: int = 999
+    investment_amount: float = 1.0
+    max_trades: int = 5
     enabled: bool = False
     use_analysis: bool = True
     manual_direction: Optional[Direction] = "CALL"
-    min_confidence: int = Field(default=0, ge=0, le=95)
-    analysis_seconds: int = Field(default=8, ge=3, le=60)
+    min_confidence: int = Field(default=90, ge=0, le=95)
+    analysis_seconds: int = Field(default=45, ge=3, le=60)
     take_profit: float = Field(default=6.0, ge=0)
     stop_loss: float = Field(default=3.0, ge=0)
-    max_consecutive_losses: int = Field(default=3, ge=1, le=20)
-    cooldown_after_loss_minutes: int = Field(default=2, ge=0, le=60)
+    max_consecutive_losses: int = Field(default=2, ge=1, le=20)
+    cooldown_after_loss_minutes: int = Field(default=15, ge=0, le=60)
     pair_cooldown_minutes: int = Field(default=5, ge=0, le=120)
     strategy_mode: Literal["safe", "normal", "aggressive"] = "normal"
     auto_blacklist_losses: int = Field(default=3, ge=1, le=10)
