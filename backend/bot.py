@@ -7,7 +7,7 @@ from models import BotConfig, TradeRequest, TradeRecord
 from quotex_adapter import QuotexAdapter
 from config import settings
 from indicators import ema, rsi, macd
-from notifier import send_signal_scheduled
+from notifier import send_signal_scheduled, send_auto_stop
 
 class TradingBot:
     def __init__(self, adapter: QuotexAdapter):
@@ -19,10 +19,14 @@ class TradingBot:
         self._series: dict[str, List[float]] = {}
         self.last_analysis: dict = {}
         self.current_signal: dict | None = None
+        self.session_pnl: float = 0.0
+        self.consecutive_losses: int = 0
 
     async def start(self, config: BotConfig):
         self.config = config
         self.config.enabled = True
+        self.session_pnl = 0.0
+        self.consecutive_losses = 0
         self.running = True
         await self.adapter.connect()
         if self._task is None or self._task.done():
@@ -38,8 +42,9 @@ class TradingBot:
         while self.running:
             try:
                 if len(self.history) >= self.config.max_trades:
-                    self.last_analysis = {"status": "STOPPED", "message": "Max trades reached"}
-                    await self.stop()
+                    await self._auto_stop("Max trades reached")
+                    break
+                if await self._risk_limit_reached():
                     break
                 await self._scheduled_trade_cycle()
             except asyncio.CancelledError:
@@ -47,6 +52,23 @@ class TradingBot:
             except Exception as e:
                 self.last_analysis = {"status": "ERROR", "message": str(e)}
                 await asyncio.sleep(5)
+
+    async def _risk_limit_reached(self) -> bool:
+        if self.config.take_profit > 0 and self.session_pnl >= self.config.take_profit:
+            await self._auto_stop(f"تحقق هدف الربح +{self.config.take_profit}$")
+            return True
+        if self.config.stop_loss > 0 and self.session_pnl <= -abs(self.config.stop_loss):
+            await self._auto_stop(f"تجاوز حد الخسارة -{self.config.stop_loss}$")
+            return True
+        if self.consecutive_losses >= self.config.max_consecutive_losses:
+            await self._auto_stop(f"{self.config.max_consecutive_losses} خسارات متتالية")
+            return True
+        return False
+
+    async def _auto_stop(self, reason: str):
+        self.last_analysis = {"status": "AUTO_STOP", "message": reason, "pnl": self.session_pnl, "consecutive_losses": self.consecutive_losses}
+        send_auto_stop(reason, round(self.session_pnl, 2), self.consecutive_losses)
+        await self.stop()
 
     async def _scheduled_trade_cycle(self):
         if self.config.use_analysis:
@@ -202,10 +224,18 @@ class TradingBot:
             trade.exit_price = exit_price; trade.closed_at = time()
             win = exit_price > (trade.entry_price or exit_price) if trade.direction == "CALL" else exit_price < (trade.entry_price or exit_price)
             trade.result = "WIN" if win else "LOSS"; trade.pnl = trade.amount * 0.86 if win else -trade.amount
-        if hasattr(self.adapter, "balance"): self.adapter.balance += trade.pnl
-        if hasattr(self.adapter, "session_pnl"): self.adapter.session_pnl += trade.pnl
-        self.last_analysis = {"status": "RESULT", "symbol": trade.symbol, "direction": trade.direction, "result": trade.result, "pnl": trade.pnl}
+        if hasattr(self.adapter, "balance"):
+            self.adapter.balance += trade.pnl
+        if hasattr(self.adapter, "session_pnl"):
+            self.adapter.session_pnl += trade.pnl
+        self.session_pnl += float(trade.pnl or 0)
+        if trade.result == "LOSS":
+            self.consecutive_losses += 1
+        elif trade.result == "WIN":
+            self.consecutive_losses = 0
+        self.last_analysis = {"status": "RESULT", "symbol": trade.symbol, "direction": trade.direction, "result": trade.result, "pnl": trade.pnl, "session_pnl": self.session_pnl, "consecutive_losses": self.consecutive_losses}
         self.current_signal = None
+        await self._risk_limit_reached()
 
     def _next_minute_boundary(self) -> float:
         now = int(time())
@@ -221,4 +251,4 @@ class TradingBot:
         return trade
 
     def status(self):
-        return {"running": self.running, "config": self.config.model_dump(), "trades_count": len(self.history), "last_analysis": self.last_analysis, "current_signal": self.current_signal}
+        return {"running": self.running, "config": self.config.model_dump(), "trades_count": len(self.history), "last_analysis": self.last_analysis, "current_signal": self.current_signal, "session_pnl": self.session_pnl, "consecutive_losses": self.consecutive_losses}

@@ -153,3 +153,16 @@ def send_test_message() -> None:
 📡 البوت متصل بالقناة ويستطيع إرسال الرسائل.
 ━━━━━━━━━━━"""
     _post_telegram(text)
+
+
+def send_auto_stop(reason: str, pnl: float, consecutive_losses: int) -> None:
+    text = f"""{settings.brand_name}
+
+🛑 *تم إيقاف البوت تلقائياً*
+━━━━━━━━━━━
+📌 *السبب:* {reason}
+📉 *Session PnL:* {pnl}
+🔻 *خسارات متتالية:* {consecutive_losses}
+━━━━━━━━━━━
+✅ لن يتم فتح صفقات جديدة حتى تضغط START من جديد."""
+    _post_telegram(text)

@@ -26,6 +26,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String manualDirection = 'CALL';
   int minConfidence = 80;
   int analysisSeconds = 20;
+  double takeProfit = 6.0;
+  double stopLoss = 3.0;
+  int maxConsecutiveLosses = 3;
   List<String> assets = ['AUTO_OTC'];
   List<dynamic> history = [];
   Map<String, dynamic>? latestTrade;
@@ -79,6 +82,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           manualDirection = (cfg['manual_direction'] ?? manualDirection).toString();
           minConfidence = (cfg['min_confidence'] as num?)?.toInt() ?? minConfidence;
           analysisSeconds = (cfg['analysis_seconds'] as num?)?.toInt() ?? analysisSeconds;
+          takeProfit = (cfg['take_profit'] as num?)?.toDouble() ?? takeProfit;
+          stopLoss = (cfg['stop_loss'] as num?)?.toDouble() ?? stopLoss;
+          maxConsecutiveLosses = (cfg['max_consecutive_losses'] as num?)?.toInt() ?? maxConsecutiveLosses;
         }
         price = (data['price'] as num?)?.toDouble() ?? price;
         history = (data['history'] as List?) ?? history;
@@ -111,7 +117,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _start() async {
     try {
-      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 1, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10, useAnalysis: useAnalysis, manualDirection: manualDirection, minConfidence: minConfidence, analysisSeconds: analysisSeconds);
+      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 1, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10, useAnalysis: useAnalysis, manualDirection: manualDirection, minConfidence: minConfidence, analysisSeconds: analysisSeconds, takeProfit: takeProfit, stopLoss: stopLoss, maxConsecutiveLosses: maxConsecutiveLosses);
       setState(() => status = 'Bot started');
     } catch (e) { setState(() => status = 'Start failed: $e'); }
   }
@@ -130,6 +136,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _stop() async { await ApiService.stopBot(); setState(() => status = 'Stopped'); }
   Future<void> _logout() async { await ApiService.logout(); widget.onLogout(); }
+
+  Future<void> _openSettings() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => BotSettingsScreen(
+      serverUrl: ApiService.baseUrl,
+      amount: amountCtrl.text,
+      maxTrades: maxTradesCtrl.text,
+      takeProfit: takeProfit,
+      stopLoss: stopLoss,
+      maxConsecutiveLosses: maxConsecutiveLosses,
+      onSave: (server, amount, maxTrades, tp, sl, mcl) async {
+        await ApiService.setBaseUrl(server);
+        amountCtrl.text = amount;
+        maxTradesCtrl.text = maxTrades;
+        takeProfit = tp;
+        stopLoss = sl;
+        maxConsecutiveLosses = mcl;
+        setState(() {});
+        _connect();
+      },
+    )));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -158,6 +185,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       Container(width: 38, height: 38, decoration: BoxDecoration(gradient: const LinearGradient(colors: [gold, Color(0xFFD97706)]), borderRadius: BorderRadius.circular(10)), child: const Center(child: Text('Q', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w900, fontSize: 18)))),
       const SizedBox(width: 10),
       const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('LATCHI BOT', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)), Text('Quotex M1 Pro Engine', style: TextStyle(color: cyan, fontSize: 10))])),
+      IconButton(onPressed: _openSettings, icon: const Icon(Icons.settings)),
       IconButton(onPressed: _connect, icon: const Icon(Icons.refresh)),
       IconButton(onPressed: _logout, icon: const Icon(Icons.logout)),
     ]),
@@ -180,6 +208,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       Expanded(child: _miniStat('السعر الحقيقي', price.toStringAsFixed(6), Colors.white)),
     ]),
     const SizedBox(height: 8),
+    Text('TP: +${fmtMoney(takeProfit)} | SL: -${fmtMoney(stopLoss)} | Max Loss Streak: $maxConsecutiveLosses', style: const TextStyle(color: muted, fontSize: 11)),
+    const SizedBox(height: 4),
     Text(status, style: const TextStyle(color: gold, fontSize: 12)),
   ]));
 

@@ -41,6 +41,9 @@ class BotConfig(BaseModel):
     manual_direction: Optional[Direction] = "CALL"
     min_confidence: int = Field(default=80, ge=80, le=95)
     analysis_seconds: int = Field(default=20, ge=5, le=60)
+    take_profit: float = Field(default=6.0, ge=0)
+    stop_loss: float = Field(default=3.0, ge=0)
+    max_consecutive_losses: int = Field(default=3, ge=1, le=20)
 
 class BotStatus(BaseModel):
     running: bool
