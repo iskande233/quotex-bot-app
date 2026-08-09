@@ -302,6 +302,19 @@ async def start_bot(config: BotConfig):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bot start failed: {e}")
 
+
+@app.post("/api/v1/bot/config")
+async def update_bot_config(config: BotConfig):
+    try:
+        config = await resolve_symbol(config)
+        bot.config = config
+        _save_state({"auto_start": bot.running, "bot_config": config.model_dump()})
+        bot._log("CONFIG", "Settings updated without restarting bot")
+        await manager.broadcast(await snapshot("config_updated"))
+        return {"success": True, "status": bot.status()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Config update failed: {e}")
+
 @app.post("/api/v1/bot/stop_after_current")
 async def stop_after_current():
     bot.request_stop_after_current()

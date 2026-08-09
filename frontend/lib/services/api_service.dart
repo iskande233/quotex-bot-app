@@ -69,6 +69,12 @@ class ApiService {
     return _decode(res);
   }
 
+  static Future<Map<String, dynamic>> updateBotConfig({required String symbol, required double amount, required int maxTrades, String timeframe = 'M1', required bool useAnalysis, required String manualDirection, required int minConfidence, required int analysisSeconds, required double takeProfit, required double stopLoss, required int maxConsecutiveLosses, required int cooldownAfterLoss, required int pairCooldown, required String strategyMode, required int autoBlacklistLosses}) async {
+    final body = {'symbol': symbol, 'timeframe': timeframe, 'investment_amount': amount, 'max_trades': maxTrades, 'enabled': true, 'use_analysis': useAnalysis, 'manual_direction': manualDirection, 'min_confidence': minConfidence, 'analysis_seconds': analysisSeconds, 'take_profit': takeProfit, 'stop_loss': stopLoss, 'max_consecutive_losses': maxConsecutiveLosses, 'cooldown_after_loss_minutes': cooldownAfterLoss, 'pair_cooldown_minutes': pairCooldown, 'strategy_mode': strategyMode, 'auto_blacklist_losses': autoBlacklistLosses};
+    final res = await http.post(Uri.parse('$baseUrl/api/v1/bot/config'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(body));
+    return _decode(res);
+  }
+
   static Future<Map<String, dynamic>> stopBot() async {
     final res = await http.post(Uri.parse('$baseUrl/api/v1/bot/stop'));
     return _decode(res);

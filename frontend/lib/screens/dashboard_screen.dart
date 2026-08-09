@@ -44,6 +44,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final Set<String> notified = {};
   Timer? countdownTimer;
   int nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  bool applyingSettings = false;
 
   @override
   void initState() {
@@ -70,6 +71,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     cooldownAfterLoss = p.getInt('cooldown_after_loss') ?? cooldownAfterLoss;
     pairCooldown = p.getInt('pair_cooldown') ?? pairCooldown;
     useAnalysis = p.getBool('use_analysis') ?? useAnalysis;
+    minConfidence = p.getInt('min_confidence') ?? minConfidence;
+    analysisSeconds = p.getInt('analysis_seconds') ?? analysisSeconds;
     manualDirection = p.getString('manual_direction') ?? manualDirection;
     selectedAsset = p.getString('selected_asset') ?? selectedAsset;
     strategyMode = p.getString('strategy_mode') ?? strategyMode;
@@ -87,6 +90,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await p.setInt('cooldown_after_loss', cooldownAfterLoss);
     await p.setInt('pair_cooldown', pairCooldown);
     await p.setBool('use_analysis', useAnalysis);
+    await p.setInt('min_confidence', minConfidence);
+    await p.setInt('analysis_seconds', analysisSeconds);
     await p.setString('manual_direction', manualDirection);
     await p.setString('selected_asset', selectedAsset);
     await p.setString('strategy_mode', strategyMode);
@@ -116,9 +121,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         balance = (bal['balance'] as num?)?.toDouble() ?? balance;
         pnl = (bal['session_pnl'] as num?)?.toDouble() ?? pnl;
         mode = bal['mode']?.toString() ?? mode;
-        running = st['running'] == true;
+        final serverRunning = st['running'] == true;
+        running = serverRunning;
         final cfg = st['config'] as Map<String, dynamic>?;
-        if (cfg != null) {
+        // Do not overwrite local saved settings with backend defaults while the bot is stopped.
+        // This was the reason settings appeared to reset and the analysis switch turned itself back on.
+        if (cfg != null && serverRunning && !applyingSettings) {
           useAnalysis = cfg['use_analysis'] == true;
           manualDirection = (cfg['manual_direction'] ?? manualDirection).toString();
           minConfidence = (cfg['min_confidence'] as num?)?.toInt() ?? minConfidence;
@@ -162,11 +170,57 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: const Color(0xFF111827), content: Row(children: [Icon(Icons.notifications_active, color: c), const SizedBox(width: 10), Expanded(child: Text('$title\n$msg'))])));
   }
 
+  Future<void> _applyServerConfig({bool showSnack = false}) async {
+    applyingSettings = true;
+    try {
+      final amount = double.tryParse(amountCtrl.text) ?? 1;
+      final maxTrades = int.tryParse(maxTradesCtrl.text) ?? 5;
+      if (running) {
+        await ApiService.updateBotConfig(
+          symbol: selectedAsset,
+          amount: amount,
+          maxTrades: maxTrades,
+          useAnalysis: useAnalysis,
+          manualDirection: manualDirection,
+          minConfidence: minConfidence,
+          analysisSeconds: analysisSeconds,
+          takeProfit: takeProfit,
+          stopLoss: stopLoss,
+          maxConsecutiveLosses: maxConsecutiveLosses,
+          cooldownAfterLoss: cooldownAfterLoss,
+          pairCooldown: pairCooldown,
+          strategyMode: strategyMode,
+          autoBlacklistLosses: autoBlacklistLosses,
+        );
+      } else {
+        await ApiService.startBot(
+          symbol: selectedAsset,
+          amount: amount,
+          maxTrades: maxTrades,
+          useAnalysis: useAnalysis,
+          manualDirection: manualDirection,
+          minConfidence: minConfidence,
+          analysisSeconds: analysisSeconds,
+          takeProfit: takeProfit,
+          stopLoss: stopLoss,
+          maxConsecutiveLosses: maxConsecutiveLosses,
+          cooldownAfterLoss: cooldownAfterLoss,
+          pairCooldown: pairCooldown,
+          strategyMode: strategyMode,
+          autoBlacklistLosses: autoBlacklistLosses,
+        );
+      }
+      if (showSnack) _snack('تم تطبيق الإعدادات', running ? 'تم تحديث البوت على السيرفر مباشرة' : 'تم تشغيل البوت بالإعدادات الجديدة', green);
+    } finally {
+      Future.delayed(const Duration(seconds: 2), () { if (mounted) applyingSettings = false; });
+    }
+  }
+
   Future<void> _start() async {
     try {
       await _saveSettings();
-      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 5, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10, useAnalysis: useAnalysis, manualDirection: manualDirection, minConfidence: minConfidence, analysisSeconds: analysisSeconds, takeProfit: takeProfit, stopLoss: stopLoss, maxConsecutiveLosses: maxConsecutiveLosses, cooldownAfterLoss: cooldownAfterLoss, pairCooldown: pairCooldown, strategyMode: strategyMode, autoBlacklistLosses: autoBlacklistLosses);
-      setState(() => status = 'Bot started');
+      await _applyServerConfig(showSnack: true);
+      setState(() => status = 'Bot started with saved settings');
     } catch (e) { setState(() => status = 'Start failed: $e'); }
   }
 
@@ -202,7 +256,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       pairCooldown: pairCooldown,
       strategyMode: strategyMode,
       autoBlacklistLosses: autoBlacklistLosses,
-      onSave: (server, amount, maxTrades, tp, sl, mcl, cal, pc, sm, abl) async {
+      minConfidence: minConfidence,
+      analysisSeconds: analysisSeconds,
+      onSave: (server, amount, maxTrades, tp, sl, mcl, cal, pc, sm, abl, conf, secs) async {
         await ApiService.setBaseUrl(server);
         amountCtrl.text = amount;
         maxTradesCtrl.text = maxTrades;
@@ -213,8 +269,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         pairCooldown = pc;
         strategyMode = sm;
         autoBlacklistLosses = abl;
+        minConfidence = conf;
+        analysisSeconds = secs;
         await _saveSettings();
-        setState(() {});
+        setState(() => status = running ? 'Applying settings to running bot...' : 'Settings saved');
+        if (running) await _applyServerConfig(showSnack: true);
         _connect();
       },
     )));
@@ -298,7 +357,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     const SizedBox(height: 12),
     DropdownButtonFormField<String>(value: assets.contains(selectedAsset) ? selectedAsset : 'AUTO_OTC', decoration: proInput('زوج التداول'), items: assets.map((a) => DropdownMenuItem(value: a, child: Text(a == 'AUTO_OTC' ? 'Auto OTC (المرشح الأقوى)' : a))).toList(), onChanged: (v) => setState(() => selectedAsset = v ?? 'AUTO_OTC')),
     const SizedBox(height: 10),
-    SwitchListTile(value: useAnalysis, contentPadding: EdgeInsets.zero, title: const Text('التحليل الذكي المتقدم'), subtitle: Text(useAnalysis ? 'يفحص كل أزواج OTC بسرعة ويختار أفضل فرصة تلقائياً' : 'تشغيل مباشر بدون تحليل بالاتجاه المختار'), onChanged: (v) => setState(() => useAnalysis = v)),
+    SwitchListTile(value: useAnalysis, contentPadding: EdgeInsets.zero, title: const Text('التحليل الذكي المتقدم'), subtitle: Text(useAnalysis ? 'يفحص كل أزواج OTC بسرعة ويختار أفضل فرصة تلقائياً' : 'تشغيل مباشر بدون تحليل بالاتجاه المختار'), onChanged: (v) async { setState(() => useAnalysis = v); await _saveSettings(); if (running) await _applyServerConfig(showSnack: true); }),
     if (!useAnalysis) DropdownButtonFormField<String>(value: manualDirection, decoration: proInput('الاتجاه بدون تحليل'), items: const [DropdownMenuItem(value: 'CALL', child: Text('CALL شراء')), DropdownMenuItem(value: 'PUT', child: Text('PUT بيع'))], onChanged: (v) => setState(() => manualDirection = v ?? 'CALL')),
     Row(children: [Expanded(child: TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: proInput('مبلغ الصفقة'))), const SizedBox(width: 10), Expanded(child: TextField(controller: maxTradesCtrl, keyboardType: TextInputType.number, decoration: proInput('Max Trades')))]),
     const SizedBox(height: 12),
@@ -400,7 +459,7 @@ class LogsScreen extends StatelessWidget {
 class BotSettingsScreen extends StatefulWidget {
   final String serverUrl, amount, maxTrades;
   final double takeProfit, stopLoss;
-  final int maxConsecutiveLosses, cooldownAfterLoss, pairCooldown, autoBlacklistLosses;
+  final int maxConsecutiveLosses, cooldownAfterLoss, pairCooldown, autoBlacklistLosses, minConfidence, analysisSeconds;
   final String strategyMode;
   final Future<void> Function(
     String server,
@@ -413,6 +472,8 @@ class BotSettingsScreen extends StatefulWidget {
     int pairCooldown,
     String strategyMode,
     int autoBlacklistLosses,
+    int minConfidence,
+    int analysisSeconds,
   ) onSave;
 
   const BotSettingsScreen({
@@ -427,6 +488,8 @@ class BotSettingsScreen extends StatefulWidget {
     required this.pairCooldown,
     required this.strategyMode,
     required this.autoBlacklistLosses,
+    required this.minConfidence,
+    required this.analysisSeconds,
     required this.onSave,
   });
 
@@ -445,6 +508,8 @@ class _BotSettingsScreenState extends State<BotSettingsScreen> {
   late int pairCd = widget.pairCooldown;
   late String strat = widget.strategyMode;
   late int autoBl = widget.autoBlacklistLosses;
+  late int conf = widget.minConfidence;
+  late int secs = widget.analysisSeconds;
   String message = '';
 
   @override
@@ -529,6 +594,12 @@ class _BotSettingsScreenState extends State<BotSettingsScreen> {
         const SizedBox(height: 10),
         DropdownButtonFormField<String>(value: strat, decoration: proInput('Strategy Mode'), items: const [DropdownMenuItem(value: 'safe', child: Text('Safe')), DropdownMenuItem(value: 'normal', child: Text('Normal')), DropdownMenuItem(value: 'aggressive', child: Text('Aggressive'))], onChanged: (v) => setState(() => strat = v ?? 'normal')),
         const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: DropdownButtonFormField<int>(value: conf, decoration: proInput('Signal Strength'), items: const [0, 50, 60, 70, 80, 85, 90, 95].map((v) => DropdownMenuItem(value: v, child: Text('$v%'))).toList(), onChanged: (v) => setState(() => conf = v ?? 90))),
+          const SizedBox(width: 10),
+          Expanded(child: DropdownButtonFormField<int>(value: secs, decoration: proInput('Analysis Duration'), items: const [5, 10, 20, 30, 45, 55, 60].map((v) => DropdownMenuItem(value: v, child: Text('${v}s'))).toList(), onChanged: (v) => setState(() => secs = v ?? 45))),
+        ]),
+        const SizedBox(height: 10),
         DropdownButtonFormField<int>(value: autoBl, decoration: proInput('Auto Blacklist Losses'), items: const [DropdownMenuItem(value: 2, child: Text('2')), DropdownMenuItem(value: 3, child: Text('3')), DropdownMenuItem(value: 4, child: Text('4')), DropdownMenuItem(value: 5, child: Text('5'))], onChanged: (v) => setState(() => autoBl = v ?? 3)),
         const SizedBox(height: 14),
         ElevatedButton.icon(
@@ -544,6 +615,8 @@ class _BotSettingsScreenState extends State<BotSettingsScreen> {
               pairCd,
               strat,
               autoBl,
+              conf,
+              secs,
             );
             if (context.mounted) Navigator.pop(context);
           },
