@@ -19,7 +19,6 @@ class QuotexBotApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'LATCHI QUOTEX BOT',
       theme: ThemeData.dark(useMaterial3: true).copyWith(
-        fontFamily: 'Roboto',
         scaffoldBackgroundColor: const Color(0xFF050817),
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber, brightness: Brightness.dark),
         elevatedButtonTheme: ElevatedButtonThemeData(
@@ -86,8 +85,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final res = await ApiService.login(email: emailCtrl.text.trim(), password: passCtrl.text, accountType: accountType, otpCode: otpCtrl.text.trim());
       widget.onSuccess((res['mode'] ?? accountType).toString().toUpperCase());
     } catch (e) {
-      setState(() { message = 'Login failed: $e
-If OTP_REQUIRED appears, enter the verification code and press Login again.'; });
+      setState(() { message = 'Login failed: $e\nIf OTP_REQUIRED appears, enter the verification code and press Login again.'; });
     } finally {
       if (mounted) setState(() { loading = false; });
     }
