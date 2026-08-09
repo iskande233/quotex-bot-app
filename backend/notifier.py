@@ -141,3 +141,13 @@ WIN ✅
 LOSS ❌
 ━━━━━━━━━━━"""
     _post_telegram(text)
+
+
+def send_test_message() -> None:
+    text = f"""{settings.brand_name}
+
+✅ *اختبار التليجرام ناجح*
+━━━━━━━━━━━
+📡 البوت متصل بالقناة ويستطيع إرسال الرسائل.
+━━━━━━━━━━━"""
+    _post_telegram(text)

@@ -89,6 +89,16 @@ class ApiService {
     return _decode(res);
   }
 
+  static Future<Map<String, dynamic>> testConnection() async {
+    final res = await http.get(Uri.parse('$baseUrl/health'));
+    return _decode(res);
+  }
+
+  static Future<Map<String, dynamic>> testTelegram() async {
+    final res = await http.post(Uri.parse('$baseUrl/api/v1/telegram/test'));
+    return _decode(res);
+  }
+
   static Map<String, dynamic> _decode(http.Response res) {
     if (res.statusCode < 200 || res.statusCode >= 300) throw Exception('HTTP ${res.statusCode}: ${res.body}');
     return jsonDecode(res.body) as Map<String, dynamic>;

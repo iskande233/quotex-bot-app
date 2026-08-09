@@ -8,7 +8,7 @@ from config import settings
 from models import BotConfig, TradeRequest, LoginRequest, LoginResponse
 from quotex_adapter import PaperQuotexAdapter, DemoQuotexAdapter, RealQuotexAdapter, PyQuotexAdapter, QuotexAdapter
 from bot import TradingBot
-from notifier import send_trade_opened, send_trade_result, send_bot_started, send_bot_stopped, send_login_success
+from notifier import send_trade_opened, send_trade_result, send_bot_started, send_bot_stopped, send_login_success, send_test_message
 
 app = FastAPI(title="Quotex Bot App API", version="0.3.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -273,6 +273,11 @@ async def place_trade(req: TradeRequest):
 @app.get("/api/v1/balance")
 async def balance():
     return await adapter.get_balance()
+
+@app.post("/api/v1/telegram/test")
+async def telegram_test():
+    send_test_message()
+    return {"success": True, "message": "Telegram test sent"}
 
 @app.get("/api/v1/assets")
 async def assets():

@@ -1,0 +1,247 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import '../services/api_service.dart';
+import '../widgets/pro_widgets.dart';
+
+class DashboardScreen extends StatefulWidget {
+  final String mode;
+  final VoidCallback onLogout;
+  const DashboardScreen({super.key, required this.mode, required this.onLogout});
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  final amountCtrl = TextEditingController(text: '1');
+  final maxTradesCtrl = TextEditingController(text: '10');
+  WebSocketChannel? channel;
+  StreamSubscription? sub;
+  bool running = false;
+  double balance = 0, pnl = 0, price = 0;
+  String mode = 'DEMO';
+  String selectedAsset = 'AUTO_OTC';
+  bool useAnalysis = true;
+  String manualDirection = 'CALL';
+  int minConfidence = 80;
+  int analysisSeconds = 20;
+  List<String> assets = ['AUTO_OTC'];
+  List<dynamic> history = [];
+  Map<String, dynamic>? latestTrade;
+  Map<String, dynamic>? currentSignal;
+  String status = 'Ready';
+  final Set<String> notified = {};
+  Timer? countdownTimer;
+  int nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+
+  @override
+  void initState() {
+    super.initState();
+    mode = widget.mode;
+    _connect();
+    _loadAssets();
+    countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) => setState(() => nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000));
+  }
+
+  @override
+  void dispose() {
+    countdownTimer?.cancel(); sub?.cancel(); channel?.sink.close(); amountCtrl.dispose(); maxTradesCtrl.dispose(); super.dispose();
+  }
+
+  Future<void> _loadAssets() async {
+    try {
+      final res = await ApiService.assets();
+      final otc = ((res['otc'] as List?) ?? []).map((e) => e.toString()).toList();
+      final all = ((res['assets'] as List?) ?? []).map((e) => e.toString()).toList();
+      setState(() => assets = ['AUTO_OTC', ...otc, ...all.where((a) => !otc.contains(a))].toSet().toList());
+    } catch (_) {}
+  }
+
+  void _connect() {
+    sub?.cancel(); channel?.sink.close();
+    channel = ApiService.connectWs();
+    sub = channel!.stream.listen((event) {
+      final data = jsonDecode(event as String) as Map<String, dynamic>;
+      final bal = data['balance'] as Map<String, dynamic>? ?? {};
+      final st = data['status'] as Map<String, dynamic>? ?? {};
+      final trade = data['trade'] as Map<String, dynamic>?;
+      final signal = st['current_signal'] as Map<String, dynamic>?;
+      setState(() {
+        final analysis = st['last_analysis'] as Map<String, dynamic>?;
+        balance = (bal['balance'] as num?)?.toDouble() ?? balance;
+        pnl = (bal['session_pnl'] as num?)?.toDouble() ?? pnl;
+        mode = bal['mode']?.toString() ?? mode;
+        running = st['running'] == true;
+        final cfg = st['config'] as Map<String, dynamic>?;
+        if (cfg != null) {
+          useAnalysis = cfg['use_analysis'] == true;
+          manualDirection = (cfg['manual_direction'] ?? manualDirection).toString();
+          minConfidence = (cfg['min_confidence'] as num?)?.toInt() ?? minConfidence;
+          analysisSeconds = (cfg['analysis_seconds'] as num?)?.toInt() ?? analysisSeconds;
+        }
+        price = (data['price'] as num?)?.toDouble() ?? price;
+        history = (data['history'] as List?) ?? history;
+        currentSignal = signal;
+        if (trade != null) latestTrade = trade;
+        if (analysis != null && analysis.isNotEmpty) {
+          status = [analysis['status'], analysis['symbol'], analysis['direction'], analysis['result'], analysis['message']].where((e) => e != null && e.toString().isNotEmpty).join(' • ');
+        } else {
+          status = 'Live ${DateTime.now().toIso8601String().substring(11, 19)}';
+        }
+      });
+      if (trade != null) _notify(data['type']?.toString() ?? 'snapshot', trade);
+    }, onError: (_) => setState(() => status = 'Connection error'), onDone: () => setState(() => status = 'Disconnected'));
+  }
+
+  void _notify(String type, Map<String, dynamic> t) {
+    final id = t['id']?.toString() ?? '';
+    if (id.isEmpty || !notified.add('$type$id')) return;
+    if (type == 'trade_opened') _snack('تم دخول الصفقة', '${t['symbol']} ${t['direction']} @ ${t['entry_price']}', gold);
+    if (type == 'trade_result') {
+      final r = t['result']?.toString() ?? 'PENDING';
+      _snack('نتيجة الصفقة: $r', '${t['symbol']} | PnL: ${t['pnl']}', r == 'WIN' ? green : red);
+    }
+  }
+
+  void _snack(String title, String msg, Color c) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: const Color(0xFF111827), content: Row(children: [Icon(Icons.notifications_active, color: c), const SizedBox(width: 10), Expanded(child: Text('$title\n$msg'))])));
+  }
+
+  Future<void> _start() async {
+    try {
+      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 1, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10, useAnalysis: useAnalysis, manualDirection: manualDirection, minConfidence: minConfidence, analysisSeconds: analysisSeconds);
+      setState(() => status = 'Bot started');
+    } catch (e) { setState(() => status = 'Start failed: $e'); }
+  }
+
+  Future<void> _randomTradeNow() async {
+    try {
+      setState(() => status = 'Opening random OTC trade now...');
+      final res = await ApiService.randomTrade(amount: double.tryParse(amountCtrl.text) ?? 1);
+      final trade = res['trade'] as Map<String, dynamic>?;
+      if (trade != null) {
+        setState(() { latestTrade = trade; status = 'Random trade opened'; });
+        _snack('تم دخول صفقة عشوائية', '${trade['symbol']} ${trade['direction']}', gold);
+      }
+    } catch (e) { setState(() => status = 'Random trade failed: $e'); }
+  }
+
+  Future<void> _stop() async { await ApiService.stopBot(); setState(() => status = 'Stopped'); }
+  Future<void> _logout() async { await ApiService.logout(); widget.onLogout(); }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF030712), Color(0xFF071027), Color(0xFF111827)]),
+        ),
+        child: SafeArea(
+          child: Column(children: [
+            _header(),
+            Expanded(child: ListView(padding: const EdgeInsets.all(16), children: [
+              _balanceCard(), const SizedBox(height: 16), _controls(), const SizedBox(height: 16), _signalCard(), const SizedBox(height: 16), _history(),
+              const Padding(padding: EdgeInsets.all(12), child: Text('التداول ينطوي على مخاطر مالية. يُنصح دائماً بالربط والتجربة على حساب Demo أولاً.', textAlign: TextAlign.center, style: TextStyle(color: muted, fontSize: 10))),
+            ])),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _header() => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+    decoration: BoxDecoration(color: const Color(0xCC0F172A), border: Border(bottom: BorderSide(color: Colors.white.withOpacity(.08)))),
+    child: Row(children: [
+      Container(width: 38, height: 38, decoration: BoxDecoration(gradient: const LinearGradient(colors: [gold, Color(0xFFD97706)]), borderRadius: BorderRadius.circular(10)), child: const Center(child: Text('Q', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w900, fontSize: 18)))),
+      const SizedBox(width: 10),
+      const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('LATCHI BOT', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)), Text('Quotex M1 Pro Engine', style: TextStyle(color: cyan, fontSize: 10))])),
+      IconButton(onPressed: _connect, icon: const Icon(Icons.refresh)),
+      IconButton(onPressed: _logout, icon: const Icon(Icons.logout)),
+    ]),
+  );
+
+  Widget _balanceCard() => ProCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Row(children: [
+      Container(padding: const EdgeInsets.all(3), decoration: BoxDecoration(color: Colors.black.withOpacity(.25), borderRadius: BorderRadius.circular(10)), child: Row(children: [
+        StatusPill(mode, color: mode == 'REAL' ? red : green),
+      ])),
+      const Spacer(),
+      const StatusPill('CONNECTED', color: green),
+    ]),
+    const SizedBox(height: 14),
+    const Text('الرصيد الحالي (USD)', style: TextStyle(color: muted, fontSize: 12)),
+    Text('\$${fmtMoney(balance)}', style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w900)),
+    const Divider(color: Color(0x22FFFFFF)),
+    Row(children: [
+      Expanded(child: _miniStat('Session PnL', pnl >= 0 ? '+${fmtMoney(pnl)}' : fmtMoney(pnl), pnl >= 0 ? green : red)),
+      Expanded(child: _miniStat('السعر الحقيقي', price.toStringAsFixed(6), Colors.white)),
+    ]),
+    const SizedBox(height: 8),
+    Text(status, style: const TextStyle(color: gold, fontSize: 12)),
+  ]));
+
+  Widget _miniStat(String t, String v, Color c) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(t, style: const TextStyle(color: muted, fontSize: 11)), Text(v, style: TextStyle(color: c, fontWeight: FontWeight.w800))]);
+
+  Widget _controls() => ProCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    const SectionTitle('إعدادات البوت والتحليل', trailing: Text('PRO', style: TextStyle(color: gold, fontSize: 11))),
+    const SizedBox(height: 12),
+    DropdownButtonFormField<String>(value: assets.contains(selectedAsset) ? selectedAsset : 'AUTO_OTC', decoration: proInput('زوج التداول'), items: assets.map((a) => DropdownMenuItem(value: a, child: Text(a == 'AUTO_OTC' ? 'Auto OTC (المرشح الأقوى)' : a))).toList(), onChanged: (v) => setState(() => selectedAsset = v ?? 'AUTO_OTC')),
+    const SizedBox(height: 10),
+    SwitchListTile(value: useAnalysis, contentPadding: EdgeInsets.zero, title: const Text('التحليل الذكي المتقدم'), subtitle: Text(useAnalysis ? 'فحص الأزواج كل $analysisSeconds ثانية لتمرير صفقات ${_rangeText()}' : 'تشغيل مباشر بدون تحليل بالاتجاه المختار'), onChanged: (v) => setState(() => useAnalysis = v)),
+    if (!useAnalysis) DropdownButtonFormField<String>(value: manualDirection, decoration: proInput('الاتجاه بدون تحليل'), items: const [DropdownMenuItem(value: 'CALL', child: Text('CALL شراء')), DropdownMenuItem(value: 'PUT', child: Text('PUT بيع'))], onChanged: (v) => setState(() => manualDirection = v ?? 'CALL')),
+    if (useAnalysis) Row(children: [Expanded(child: DropdownButtonFormField<int>(value: minConfidence, decoration: proInput('قوة الإشارة'), items: const [DropdownMenuItem(value: 80, child: Text('80% - 90%')), DropdownMenuItem(value: 90, child: Text('90% - 95%')), DropdownMenuItem(value: 95, child: Text('95%'))], onChanged: (v) => setState(() => minConfidence = v ?? 80))), const SizedBox(width: 10), Expanded(child: DropdownButtonFormField<int>(value: analysisSeconds, decoration: proInput('مدة الفحص'), items: const [DropdownMenuItem(value: 20, child: Text('20s')), DropdownMenuItem(value: 30, child: Text('30s'))], onChanged: (v) => setState(() => analysisSeconds = v ?? 20)))]),
+    Row(children: [Expanded(child: TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: proInput('مبلغ الصفقة'))), const SizedBox(width: 10), Expanded(child: TextField(controller: maxTradesCtrl, keyboardType: TextInputType.number, decoration: proInput('Max Trades')))]),
+    const SizedBox(height: 12),
+    Row(children: [Expanded(child: ElevatedButton.icon(onPressed: running ? null : _start, icon: const Icon(Icons.play_arrow), label: const Text('START BOT'))), const SizedBox(width: 10), Expanded(child: OutlinedButton.icon(onPressed: running ? _stop : null, icon: const Icon(Icons.stop), label: const Text('STOP')))]),
+    const SizedBox(height: 10),
+    OutlinedButton.icon(onPressed: _randomTradeNow, icon: const Icon(Icons.casino), label: const Text('صفقة عشوائية للتجربة الفورية')),
+  ]));
+
+  String _rangeText() => minConfidence == 80 ? '80-90%' : minConfidence == 90 ? '90-95%' : '95%';
+
+  Widget _signalCard() {
+    final t = latestTrade;
+    final sig = currentSignal;
+    final pendingTrade = t != null && (t['result']?.toString() ?? 'PENDING') == 'PENDING';
+    if (sig != null && sig['status'] == 'SCHEDULED' && !pendingTrade) return _scheduledSignal(sig);
+    if (t == null) return ProCard(border: gold.withOpacity(.8), child: Text(useAnalysis ? 'سيتم تحليل الأزواج واختيار أفضل صفقة.\nالحالة: $status' : 'سيتم الدخول مباشرة بدون تحليل.\nالحالة: $status'));
+    return _tradeSignal(t);
+  }
+
+  Widget _scheduledSignal(Map<String, dynamic> sig) {
+    final dir = sig['direction']?.toString() ?? '';
+    final entry = sig['entry_time'];
+    final entrySec = entry == null ? 0 : (entry as num).toInt();
+    final left = entrySec > 0 ? (entrySec - nowSec).clamp(0, 999) : 0;
+    return ProCard(border: gold, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const Text('⚡ الإشارة الحالية', style: TextStyle(color: gold, fontWeight: FontWeight.w900, fontSize: 16)),
+      LinearProgressIndicator(value: left == 0 ? 1 : (60 - left.clamp(0, 60)) / 60, color: gold, backgroundColor: Colors.white10),
+      const SizedBox(height: 12),
+      _dataGrid({'الزوج': '${sig['symbol']}', 'المدة': 'M1', 'الدخول بعد': '${left}s', 'القوة': '${sig['confidence']}%', 'الاتجاه': dir == 'CALL' ? 'CALL 🔼' : 'PUT 🔻'}),
+    ]));
+  }
+
+  Widget _tradeSignal(Map<String, dynamic> t) {
+    final result = t['result']?.toString() ?? 'PENDING';
+    final dir = t['direction']?.toString() ?? '';
+    return ProCard(border: result == 'WIN' ? green : result == 'LOSS' ? red : gold, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const Text('💲 صفقة جديدة 💲', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: gold)),
+      const Divider(color: Colors.white38),
+      _dataGrid({'الزوج': '${t['symbol']}', 'المدة': 'M1', 'المبلغ': '${t['amount']}', 'الاتجاه': dir == 'CALL' ? 'CALL 🔼 شراء' : 'PUT 🔻 بيع'}),
+      const Divider(color: Colors.white38),
+      Text(result == 'PENDING' ? '⏳ النتيجة: قيد الانتظار' : (result == 'WIN' ? '🟢💰 ربح مباشر WIN ✅' : '💔 خسارة LOSS ❌'), textAlign: TextAlign.center, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: result == 'WIN' ? green : result == 'LOSS' ? red : gold)),
+    ]));
+  }
+
+  Widget _dataGrid(Map<String, String> data) => Wrap(spacing: 8, runSpacing: 8, children: data.entries.map((e) => Container(width: 150, padding: const EdgeInsets.all(9), decoration: BoxDecoration(color: Colors.black.withOpacity(.18), borderRadius: BorderRadius.circular(10)), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(e.key, style: const TextStyle(color: muted, fontSize: 12)), Flexible(child: Text(e.value, textAlign: TextAlign.end, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)))]))).toList());
+
+  Widget _history() => ProCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    const SectionTitle('سجل الصفقات', trailing: Text('آخر صفقات البوت', style: TextStyle(color: muted, fontSize: 11))),
+    const SizedBox(height: 8),
+    if (history.isEmpty) const Padding(padding: EdgeInsets.all(12), child: Text('No trades yet')),
+    ...history.take(12).map((e) { final m = e as Map<String, dynamic>; final r = m['result']?.toString() ?? 'PENDING'; return ListTile(dense: true, title: Text('${m['symbol']} ${m['direction']}'), subtitle: Text('In: ${m['entry_price']} | Out: ${m['exit_price']}'), trailing: StatusPill(r, color: r == 'WIN' ? green : r == 'LOSS' ? red : gold)); }),
+  ]));
+}
