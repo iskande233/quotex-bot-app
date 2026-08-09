@@ -74,6 +74,11 @@ class ApiService {
     return _decode(res);
   }
 
+  static Future<Map<String, dynamic>> randomTrade({required double amount}) async {
+    final res = await http.post(Uri.parse('$baseUrl/api/v1/bot/random_trade?amount=$amount'));
+    return _decode(res);
+  }
+
   static Future<Map<String, dynamic>> assets() async {
     final res = await http.get(Uri.parse('$baseUrl/api/v1/assets'));
     return _decode(res);

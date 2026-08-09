@@ -247,6 +247,17 @@ async def stop_bot():
 async def bot_status():
     return bot.status()
 
+@app.post("/api/v1/bot/random_trade")
+async def random_trade(amount: float = 1.0):
+    try:
+        trade = await bot.open_random_trade_now(amount)
+        balance = await adapter.get_balance()
+        send_trade_opened(trade)
+        await manager.broadcast(await snapshot("trade_opened", {"trade": trade.model_dump()}))
+        return {"success": True, "trade": trade.model_dump(), "balance": balance.model_dump()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Random trade failed: {e}")
+
 @app.post("/api/v1/trade")
 async def place_trade(req: TradeRequest):
     try:

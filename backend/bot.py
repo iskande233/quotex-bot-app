@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import random
 from time import time
 from typing import List
 from models import BotConfig, TradeRequest, TradeRecord
@@ -193,6 +194,18 @@ class TradingBot:
         if hasattr(self.adapter, "session_pnl"):
             self.adapter.session_pnl += trade.pnl
         self.last_analysis = {"status": "RESULT", "symbol": trade.symbol, "direction": trade.direction, "result": trade.result, "pnl": trade.pnl}
+
+    async def open_random_trade_now(self, amount: float = 1.0) -> TradeRecord:
+        """Open one immediate random OTC trade for testing real execution."""
+        assets = await self.adapter.list_assets()
+        otc = [a for a in assets if "OTC" in a.upper()]
+        symbol = random.choice(otc or assets or ["EURUSD-OTC"])
+        direction = random.choice(["CALL", "PUT"])
+        self.last_analysis = {"status": "RANDOM_TRADE", "symbol": symbol, "direction": direction, "message": "Opening random test trade now"}
+        trade = await self.adapter.place_trade(TradeRequest(symbol=symbol, direction=direction, amount=amount, duration_seconds=60))
+        self.history.insert(0, trade)
+        asyncio.create_task(self._settle_trade(trade))
+        return trade
 
     def status(self):
         return {"running": self.running, "config": self.config.model_dump(), "trades_count": len(self.history), "last_analysis": self.last_analysis}

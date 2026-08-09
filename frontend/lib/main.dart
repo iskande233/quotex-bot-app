@@ -231,6 +231,20 @@ class _BotDashboardState extends State<BotDashboard> {
     } catch (e) { setState(() => status = 'Start failed: $e'); }
   }
 
+  Future<void> _randomTradeNow() async {
+    try {
+      setState(() => status = 'Opening random OTC trade now...');
+      final res = await ApiService.randomTrade(amount: double.tryParse(amountCtrl.text) ?? 1);
+      final trade = res['trade'] as Map<String, dynamic>?;
+      if (trade != null) {
+        setState(() { latestTrade = trade; status = 'Random trade opened'; });
+        _snack('تم دخول صفقة عشوائية', '${trade['symbol']} ${trade['direction']}', Colors.amber);
+      }
+    } catch (e) {
+      setState(() => status = 'Random trade failed: $e');
+    }
+  }
+
   Future<void> _stop() async { await ApiService.stopBot(); setState(() => status = 'Stopped'); }
   Future<void> _logout() async { await ApiService.logout(); widget.onLogout(); }
 
@@ -271,6 +285,8 @@ class _BotDashboardState extends State<BotDashboard> {
       Row(children: [Expanded(child: TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'المبلغ'))), const SizedBox(width: 12), Expanded(child: TextField(controller: maxTradesCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Max')))]),
       const SizedBox(height: 14),
       Row(children: [Expanded(child: ElevatedButton.icon(onPressed: running ? null : _start, icon: const Icon(Icons.play_arrow), label: const Text('START'))), const SizedBox(width: 10), Expanded(child: ElevatedButton.icon(onPressed: running ? _stop : null, icon: const Icon(Icons.stop), label: const Text('STOP')))]),
+      const SizedBox(height: 10),
+      OutlinedButton.icon(onPressed: _randomTradeNow, icon: const Icon(Icons.casino), label: const Text('صفقة عشوائية الآن للتجربة')),
     ]));
 
   Widget _signalCard() {
