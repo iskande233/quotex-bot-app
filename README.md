@@ -1,0 +1,36 @@
+# Quotex Bot App — Architecture Scaffold
+
+Cross-platform trading bot application scaffold for local testing first, with future Railway backend deployment.
+
+> Risk notice: Trading is risky. This repository is a technical scaffold. It defaults to paper/demo mode and does not guarantee profits. Ensure any API usage complies with platform terms.
+
+## Structure
+
+```text
+quotex-bot-app/
+  frontend/   Flutter UI scaffold
+  backend/    FastAPI bot core + local API
+  docs/       Architecture and API reference
+```
+
+## Quick backend start
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app:app --reload --host 0.0.0.0 --port 8000
+```
+
+Open:
+
+```text
+http://localhost:8000/docs
+```
+
+## Safety defaults
+
+- `PAPER_MODE=true` by default.
+- Real trade execution is blocked until a real adapter is implemented and explicitly enabled.
+- Quotex API adapter is an interface/stub to be connected later.
