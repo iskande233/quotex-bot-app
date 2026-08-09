@@ -32,16 +32,22 @@ class TradingBot:
 
     async def _loop(self):
         while self.running:
-            if len(self.history) >= self.config.max_trades:
-                await self.stop()
-                break
-            await self._execute_trade_cycle()
+            try:
+                if len(self.history) >= self.config.max_trades:
+                    self.last_analysis = {"status": "STOPPED", "message": "Max trades reached"}
+                    await self.stop()
+                    break
+                await self._execute_trade_cycle()
+            except Exception as e:
+                # Keep the bot alive and expose the real failure to Flutter instead of silently dying.
+                self.last_analysis = {"status": "ERROR", "message": str(e)}
             # after each result cycle, continue from next minute boundary
             now = int(time())
             await asyncio.sleep(max(2, 60 - (now % 60)))
 
     async def _execute_trade_cycle(self):
         if self.config.use_analysis:
+            self.last_analysis = {"status": "ANALYZING", "message": f"Scanning assets for {self.config.analysis_seconds}s at +{self.config.min_confidence}%"}
             setup = await self._find_best_setup()
             if not setup:
                 self.last_analysis = {"status": "NO_SIGNAL", "message": "No setup above confidence threshold"}
@@ -59,6 +65,7 @@ class TradingBot:
             amount=self.config.investment_amount,
             duration_seconds=60,
         )
+        self.last_analysis = {"status": "PLACING_TRADE", "symbol": symbol, "direction": direction, "confidence": confidence, "reason": reason}
         trade = await self.adapter.place_trade(req)
         # attach lightweight analysis fields dynamically for API model_dump unaffected
         trade_dict_note = f"{reason} | confidence={confidence}%"
@@ -160,6 +167,7 @@ class TradingBot:
             except Exception:
                 result_used = False
         if not result_used:
+            self.last_analysis = {"status": "WAITING_RESULT", "symbol": trade.symbol, "direction": trade.direction, "message": "Waiting 60s result"}
             await asyncio.sleep(60)
             exit_price = await self.adapter.latest_price(trade.symbol)
             trade.exit_price = exit_price
@@ -171,6 +179,7 @@ class TradingBot:
             self.adapter.balance += trade.pnl
         if hasattr(self.adapter, "session_pnl"):
             self.adapter.session_pnl += trade.pnl
+        self.last_analysis = {"status": "RESULT", "symbol": trade.symbol, "direction": trade.direction, "result": trade.result, "pnl": trade.pnl}
 
     def status(self):
         return {"running": self.running, "config": self.config.model_dump(), "trades_count": len(self.history), "last_analysis": self.last_analysis}

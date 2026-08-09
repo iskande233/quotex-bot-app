@@ -177,6 +177,7 @@ class _BotDashboardState extends State<BotDashboard> {
       final st = data['status'] as Map<String, dynamic>? ?? {};
       final trade = data['trade'] as Map<String, dynamic>?;
       setState(() {
+        final analysis = st['last_analysis'] as Map<String, dynamic>?;
         balance = (bal['balance'] as num?)?.toDouble() ?? balance;
         pnl = (bal['session_pnl'] as num?)?.toDouble() ?? pnl;
         mode = bal['mode']?.toString() ?? mode;
@@ -191,7 +192,18 @@ class _BotDashboardState extends State<BotDashboard> {
         price = (data['price'] as num?)?.toDouble() ?? price;
         history = (data['history'] as List?) ?? history;
         if (trade != null) latestTrade = trade;
-        status = 'Live ${DateTime.now().toIso8601String().substring(11, 19)}';
+        final liveTime = DateTime.now().toIso8601String().substring(11, 19);
+        if (analysis != null && analysis.isNotEmpty) {
+          final aStatus = analysis['status']?.toString() ?? '';
+          final msg = analysis['message']?.toString() ?? '';
+          final sym = analysis['symbol']?.toString() ?? '';
+          final dir = analysis['direction']?.toString() ?? '';
+          final res = analysis['result']?.toString() ?? '';
+          status = [aStatus, sym, dir, res, msg].where((e) => e.isNotEmpty).join(' • ');
+          if (status.isEmpty) status = 'Live $liveTime';
+        } else {
+          status = 'Live $liveTime';
+        }
       });
       if (trade != null) _notify(data['type']?.toString() ?? 'snapshot', trade);
     }, onError: (e) => setState(() => status = 'Connection error'), onDone: () => setState(() => status = 'Disconnected'));
@@ -263,7 +275,7 @@ class _BotDashboardState extends State<BotDashboard> {
 
   Widget _signalCard() {
     final t = latestTrade;
-    if (t == null) return _panel('Signal', useAnalysis ? 'لا توجد صفقة حالياً. عند START سيتم تحليل الأزواج واختيار أفضل صفقة.' : 'لا توجد صفقة حالياً. عند START سيتم الدخول مباشرة بدون تحليل.');
+    if (t == null) return _panel('Signal', useAnalysis ? 'سيتم تحليل الأزواج واختيار أفضل صفقة.\nالحالة: $status' : 'سيتم الدخول مباشرة بدون تحليل.\nالحالة: $status');
     final result = t['result']?.toString() ?? 'PENDING';
     final dir = t['direction']?.toString() ?? '';
     return Container(padding: const EdgeInsets.all(18), decoration: _box(stroke: result == 'WIN' ? Colors.greenAccent : result == 'LOSS' ? Colors.redAccent : Colors.amber), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
