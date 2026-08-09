@@ -24,7 +24,13 @@ def _post_telegram(text: str) -> None:
 
 
 def fmt_symbol(symbol: str) -> str:
-    return symbol.replace("_otc", "-OTC").replace("_OTC", "-OTC").replace("/", "").upper()
+    s = str(symbol or "").strip()
+    low = s.lower()
+    # pyquotex format: eur_usdotc -> EURUSD-OTC
+    if low.endswith("otc"):
+        base = low[:-3].replace("_", "").upper()
+        return f"{base}-OTC"
+    return s.replace("_", "").replace("/", "").upper()
 
 
 def send_trade_opened(trade: TradeRecord) -> None:

@@ -4,6 +4,20 @@ from random import random
 from time import time
 from models import TradeRequest, TradeRecord, BalanceResponse
 
+# Official OTC universe requested for the bot. Keep lowercase pyquotex asset format.
+OTC_PAIRS = [
+    "usd_inrotc", "usd_jpyotc", "usd_ngnotc", "usd_pkrotc",
+    "gbp_nzdotc", "aud_nzdotc", "gbp_chfotc", "eur_nzdotc",
+    "usd_zarotc", "nzd_usdotc", "usd_cadotc", "nzd_jpyotc",
+    "gbp_usdotc", "aud_cadotc", "aud_chfotc", "eur_usdotc",
+    "usd_dzdotc", "chf_jpyotc", "eur_chfotc", "gbp_audotc",
+    "aud_jpyotc", "eur_audotc", "nzd_chfotc", "cad_chfotc",
+    "aud_usdotc", "eur_cadotc", "nzd_cadotc", "usd_arsotc",
+    "usd_brlotc", "usd_mxnotc", "eur_gbpotc", "eur_jpyotc",
+    "gbp_jpyotc", "usd_chfotc", "usd_egpotc", "usd_idrotc",
+    "usd_phpotc",
+]
+
 class QuotexAdapter(ABC):
     mode = "PAPER"
 
@@ -46,11 +60,7 @@ class PaperQuotexAdapter(QuotexAdapter):
         return round(base, 6)
 
     async def list_assets(self) -> list[str]:
-        return [
-            "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "EURJPY-OTC",
-            "AUDUSD-OTC", "USDCAD-OTC", "GBPJPY-OTC", "AUDNZD-OTC",
-            "EURUSD", "GBPUSD", "USDJPY"
-        ]
+        return list(OTC_PAIRS)
 
     async def place_trade(self, req: TradeRequest) -> TradeRecord:
         price = await self.latest_price(req.symbol)
@@ -137,17 +147,44 @@ class PyQuotexAdapter(QuotexAdapter):
         return value
 
     def _asset(self, symbol: str) -> str:
-        """Normalize common UI symbols to Quotex asset names.
+        """Normalize all UI/API symbols to the exact pyquotex OTC asset format.
 
-        Examples:
-            EUR/USD OTC -> EURUSD_otc
-            EURUSD-OTC  -> EURUSD_otc
-            EURUSD_otc  -> EURUSD_otc
+        Required format examples from the platform:
+            eur_usdotc, gbp_jpyotc, aud_nzdotc
+
+        Accepted inputs:
+            EUR/USD OTC, EURUSD-OTC, EURUSD_otc, eur_usdotc, AUTO_OTC
         """
-        clean = symbol.strip().replace("/", "").replace(" ", "").replace("-", "_")
-        if clean.upper().endswith("_OTC"):
-            return clean[:-4].upper() + "_otc"
-        return clean.upper()
+        raw = (symbol or "").strip().lower()
+        if raw in {"auto", "auto_otc", "otc_auto"}:
+            return OTC_PAIRS[0]
+        clean = raw.replace(" ", "").replace("/", "").replace("-", "_")
+        # Already in official format.
+        if clean in OTC_PAIRS:
+            return clean
+        # eurusd_otc -> eur_usdotc
+        if clean.endswith("_otc") and len(clean) >= 10:
+            base = clean[:-4].replace("_", "")
+            if len(base) == 6:
+                candidate = f"{base[:3]}_{base[3:]}otc"
+                if candidate in OTC_PAIRS:
+                    return candidate
+                return candidate
+        # eurusdotc -> eur_usdotc
+        if clean.endswith("otc"):
+            base = clean[:-3].replace("_", "")
+            if len(base) == 6:
+                candidate = f"{base[:3]}_{base[3:]}otc"
+                if candidate in OTC_PAIRS:
+                    return candidate
+                return candidate
+        # eurusd -> eur_usdotc (force OTC; bot does not trade real pairs).
+        base = clean.replace("_", "")
+        if len(base) == 6:
+            candidate = f"{base[:3]}_{base[3:]}otc"
+            if candidate in OTC_PAIRS:
+                return candidate
+        return clean
 
     async def connect(self) -> None:
         Quotex = self._load_client_class()
@@ -216,8 +253,16 @@ class PyQuotexAdapter(QuotexAdapter):
         raise NotImplementedError("pyquotex get_candles mapping failed for asset " + asset)
 
     async def list_assets(self) -> list[str]:
+        """Return only OTC pairs supported by our bot.
+
+        We optionally ask the wrapper for currently available instruments and
+        intersect them with the requested OTC universe. If the wrapper cannot
+        provide instruments, we still return the official OTC list so AUTO_OTC
+        never falls back to real non-OTC assets.
+        """
         if not self.connected:
             await self.connect()
+        discovered: set[str] = set()
         for method_name in ("get_all_asset_name", "get_all_assets", "get_assets", "get_available_assets"):
             method = getattr(self.client, method_name, None)
             if callable(method):
@@ -225,7 +270,6 @@ class PyQuotexAdapter(QuotexAdapter):
                     data = await self._maybe_await(method())
                     if isinstance(data, dict):
                         data = list(data.keys())
-                    out = []
                     for item in data or []:
                         if isinstance(item, (list, tuple)) and item:
                             name = str(item[0])
@@ -234,12 +278,14 @@ class PyQuotexAdapter(QuotexAdapter):
                         else:
                             name = str(item)
                         if name:
-                            out.append(name.replace("_otc", "-OTC").replace("_OTC", "-OTC"))
-                    if out:
-                        return sorted(set(out))
+                            normalized = self._asset(name)
+                            if normalized in OTC_PAIRS:
+                                discovered.add(normalized)
+                    if discovered:
+                        break
                 except Exception:
                     continue
-        return await super().list_assets()
+        return [p for p in OTC_PAIRS if not discovered or p in discovered]
 
     async def place_trade(self, req: TradeRequest) -> TradeRecord:
         if not self.connected:
