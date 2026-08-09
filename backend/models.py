@@ -44,6 +44,8 @@ class BotConfig(BaseModel):
     take_profit: float = Field(default=6.0, ge=0)
     stop_loss: float = Field(default=3.0, ge=0)
     max_consecutive_losses: int = Field(default=3, ge=1, le=20)
+    cooldown_after_loss_minutes: int = Field(default=2, ge=0, le=60)
+    pair_cooldown_minutes: int = Field(default=5, ge=0, le=120)
 
 class BotStatus(BaseModel):
     running: bool

@@ -236,6 +236,12 @@ async def start_bot(config: BotConfig):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bot start failed: {e}")
 
+@app.post("/api/v1/bot/stop_after_current")
+async def stop_after_current():
+    bot.request_stop_after_current()
+    await manager.broadcast(await snapshot("stop_after_current"))
+    return {"success": True, "status": bot.status()}
+
 @app.post("/api/v1/bot/stop")
 async def stop_bot():
     cfg = bot.config

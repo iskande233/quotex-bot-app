@@ -29,8 +29,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   double takeProfit = 6.0;
   double stopLoss = 3.0;
   int maxConsecutiveLosses = 3;
+  int cooldownAfterLoss = 2;
+  int pairCooldown = 5;
   List<String> assets = ['AUTO_OTC'];
   List<dynamic> history = [];
+  List<dynamic> logs = [];
+  Map<String, dynamic> stats = {};
   Map<String, dynamic>? latestTrade;
   Map<String, dynamic>? currentSignal;
   String status = 'Ready';
@@ -85,9 +89,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
           takeProfit = (cfg['take_profit'] as num?)?.toDouble() ?? takeProfit;
           stopLoss = (cfg['stop_loss'] as num?)?.toDouble() ?? stopLoss;
           maxConsecutiveLosses = (cfg['max_consecutive_losses'] as num?)?.toInt() ?? maxConsecutiveLosses;
+          cooldownAfterLoss = (cfg['cooldown_after_loss_minutes'] as num?)?.toInt() ?? cooldownAfterLoss;
+          pairCooldown = (cfg['pair_cooldown_minutes'] as num?)?.toInt() ?? pairCooldown;
         }
         price = (data['price'] as num?)?.toDouble() ?? price;
         history = (data['history'] as List?) ?? history;
+        logs = (st['logs'] as List?) ?? logs;
+        stats = (st['stats'] as Map<String, dynamic>?) ?? stats;
         currentSignal = signal;
         if (trade != null) latestTrade = trade;
         if (analysis != null && analysis.isNotEmpty) {
@@ -117,7 +125,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _start() async {
     try {
-      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 1, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10, useAnalysis: useAnalysis, manualDirection: manualDirection, minConfidence: minConfidence, analysisSeconds: analysisSeconds, takeProfit: takeProfit, stopLoss: stopLoss, maxConsecutiveLosses: maxConsecutiveLosses);
+      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 1, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10, useAnalysis: useAnalysis, manualDirection: manualDirection, minConfidence: minConfidence, analysisSeconds: analysisSeconds, takeProfit: takeProfit, stopLoss: stopLoss, maxConsecutiveLosses: maxConsecutiveLosses, cooldownAfterLoss: cooldownAfterLoss, pairCooldown: pairCooldown);
       setState(() => status = 'Bot started');
     } catch (e) { setState(() => status = 'Start failed: $e'); }
   }
@@ -135,7 +143,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _stop() async { await ApiService.stopBot(); setState(() => status = 'Stopped'); }
+  Future<void> _stopAfterCurrent() async { await ApiService.stopAfterCurrent(); setState(() => status = 'Will stop after current trade'); }
   Future<void> _logout() async { await ApiService.logout(); widget.onLogout(); }
+
+  Future<void> _openLogs() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LogsScreen(logs: logs)));
+  }
 
   Future<void> _openSettings() async {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => BotSettingsScreen(
@@ -145,13 +158,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
       takeProfit: takeProfit,
       stopLoss: stopLoss,
       maxConsecutiveLosses: maxConsecutiveLosses,
-      onSave: (server, amount, maxTrades, tp, sl, mcl) async {
+      cooldownAfterLoss: cooldownAfterLoss,
+      pairCooldown: pairCooldown,
+      onSave: (server, amount, maxTrades, tp, sl, mcl, cal, pc) async {
         await ApiService.setBaseUrl(server);
         amountCtrl.text = amount;
         maxTradesCtrl.text = maxTrades;
         takeProfit = tp;
         stopLoss = sl;
         maxConsecutiveLosses = mcl;
+        cooldownAfterLoss = cal;
+        pairCooldown = pc;
         setState(() {});
         _connect();
       },
@@ -169,7 +186,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: Column(children: [
             _header(),
             Expanded(child: ListView(padding: const EdgeInsets.all(16), children: [
-              _balanceCard(), const SizedBox(height: 16), _controls(), const SizedBox(height: 16), _signalCard(), const SizedBox(height: 16), _history(),
+              _balanceCard(), const SizedBox(height: 16), _statsCard(), const SizedBox(height: 16), _controls(), const SizedBox(height: 16), _signalCard(), const SizedBox(height: 16), _history(),
               const Padding(padding: EdgeInsets.all(12), child: Text('التداول ينطوي على مخاطر مالية. يُنصح دائماً بالربط والتجربة على حساب Demo أولاً.', textAlign: TextAlign.center, style: TextStyle(color: muted, fontSize: 10))),
             ])),
           ]),
@@ -185,6 +202,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       Container(width: 38, height: 38, decoration: BoxDecoration(gradient: const LinearGradient(colors: [gold, Color(0xFFD97706)]), borderRadius: BorderRadius.circular(10)), child: const Center(child: Text('Q', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w900, fontSize: 18)))),
       const SizedBox(width: 10),
       const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('LATCHI BOT', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)), Text('Quotex M1 Pro Engine', style: TextStyle(color: cyan, fontSize: 10))])),
+      IconButton(onPressed: _openLogs, icon: const Icon(Icons.list_alt)),
       IconButton(onPressed: _openSettings, icon: const Icon(Icons.settings)),
       IconButton(onPressed: _connect, icon: const Icon(Icons.refresh)),
       IconButton(onPressed: _logout, icon: const Icon(Icons.logout)),
@@ -208,12 +226,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
       Expanded(child: _miniStat('السعر الحقيقي', price.toStringAsFixed(6), Colors.white)),
     ]),
     const SizedBox(height: 8),
-    Text('TP: +${fmtMoney(takeProfit)} | SL: -${fmtMoney(stopLoss)} | Max Loss Streak: $maxConsecutiveLosses', style: const TextStyle(color: muted, fontSize: 11)),
+    Text('TP: +${fmtMoney(takeProfit)} | SL: -${fmtMoney(stopLoss)} | Max Loss: $maxConsecutiveLosses | Cooldown: ${cooldownAfterLoss}m', style: const TextStyle(color: muted, fontSize: 11)),
     const SizedBox(height: 4),
     Text(status, style: const TextStyle(color: gold, fontSize: 12)),
   ]));
 
   Widget _miniStat(String t, String v, Color c) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(t, style: const TextStyle(color: muted, fontSize: 11)), Text(v, style: TextStyle(color: c, fontWeight: FontWeight.w800))]);
+
+  Widget _statsCard() => ProCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    const SectionTitle('إحصائيات الجلسة', trailing: Text('SESSION', style: TextStyle(color: gold, fontSize: 11))),
+    const SizedBox(height: 10),
+    Row(children: [
+      Expanded(child: _miniStat('Trades', '${stats['total'] ?? 0}', Colors.white)),
+      Expanded(child: _miniStat('Wins', '${stats['wins'] ?? 0}', green)),
+      Expanded(child: _miniStat('Losses', '${stats['losses'] ?? 0}', red)),
+    ]),
+    const SizedBox(height: 10),
+    Row(children: [
+      Expanded(child: _miniStat('Accuracy', '${stats['accuracy'] ?? 0}%', gold)),
+      Expanded(child: _miniStat('PnL', '${stats['session_pnl'] ?? 0}', (stats['session_pnl'] ?? 0) is num && (stats['session_pnl'] as num) < 0 ? red : green)),
+      Expanded(child: _miniStat('Loss Streak', '${stats['consecutive_losses'] ?? 0}', red)),
+    ]),
+  ]));
 
   Widget _controls() => ProCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     const SectionTitle('إعدادات البوت والتحليل', trailing: Text('PRO', style: TextStyle(color: gold, fontSize: 11))),
@@ -226,6 +260,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     Row(children: [Expanded(child: TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: proInput('مبلغ الصفقة'))), const SizedBox(width: 10), Expanded(child: TextField(controller: maxTradesCtrl, keyboardType: TextInputType.number, decoration: proInput('Max Trades')))]),
     const SizedBox(height: 12),
     Row(children: [Expanded(child: ElevatedButton.icon(onPressed: running ? null : _start, icon: const Icon(Icons.play_arrow), label: const Text('START BOT'))), const SizedBox(width: 10), Expanded(child: OutlinedButton.icon(onPressed: running ? _stop : null, icon: const Icon(Icons.stop), label: const Text('STOP')))]),
+    const SizedBox(height: 10),
+    OutlinedButton.icon(onPressed: running ? _stopAfterCurrent : null, icon: const Icon(Icons.pause_circle), label: const Text('إيقاف بعد الصفقة الحالية')),
     const SizedBox(height: 10),
     OutlinedButton.icon(onPressed: _randomTradeNow, icon: const Icon(Icons.casino), label: const Text('صفقة عشوائية للتجربة الفورية')),
   ]));

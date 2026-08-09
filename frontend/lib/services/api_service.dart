@@ -64,13 +64,18 @@ class ApiService {
     return _decode(res);
   }
 
-  static Future<Map<String, dynamic>> startBot({required String symbol, required double amount, required int maxTrades, String timeframe = 'M1', required bool useAnalysis, required String manualDirection, required int minConfidence, required int analysisSeconds, required double takeProfit, required double stopLoss, required int maxConsecutiveLosses}) async {
-    final res = await http.post(Uri.parse('$baseUrl/api/v1/bot/start'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'symbol': symbol, 'timeframe': timeframe, 'investment_amount': amount, 'max_trades': maxTrades, 'enabled': true, 'use_analysis': useAnalysis, 'manual_direction': manualDirection, 'min_confidence': minConfidence, 'analysis_seconds': analysisSeconds, 'take_profit': takeProfit, 'stop_loss': stopLoss, 'max_consecutive_losses': maxConsecutiveLosses}));
+  static Future<Map<String, dynamic>> startBot({required String symbol, required double amount, required int maxTrades, String timeframe = 'M1', required bool useAnalysis, required String manualDirection, required int minConfidence, required int analysisSeconds, required double takeProfit, required double stopLoss, required int maxConsecutiveLosses, required int cooldownAfterLoss, required int pairCooldown}) async {
+    final res = await http.post(Uri.parse('$baseUrl/api/v1/bot/start'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'symbol': symbol, 'timeframe': timeframe, 'investment_amount': amount, 'max_trades': maxTrades, 'enabled': true, 'use_analysis': useAnalysis, 'manual_direction': manualDirection, 'min_confidence': minConfidence, 'analysis_seconds': analysisSeconds, 'take_profit': takeProfit, 'stop_loss': stopLoss, 'max_consecutive_losses': maxConsecutiveLosses, 'cooldown_after_loss_minutes': cooldownAfterLoss, 'pair_cooldown_minutes': pairCooldown}));
     return _decode(res);
   }
 
   static Future<Map<String, dynamic>> stopBot() async {
     final res = await http.post(Uri.parse('$baseUrl/api/v1/bot/stop'));
+    return _decode(res);
+  }
+
+  static Future<Map<String, dynamic>> stopAfterCurrent() async {
+    final res = await http.post(Uri.parse('$baseUrl/api/v1/bot/stop_after_current'));
     return _decode(res);
   }
 

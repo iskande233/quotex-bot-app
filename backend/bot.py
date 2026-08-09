@@ -21,18 +21,27 @@ class TradingBot:
         self.current_signal: dict | None = None
         self.session_pnl: float = 0.0
         self.consecutive_losses: int = 0
+        self.stop_requested_after_current: bool = False
+        self.cooldown_until: float = 0.0
+        self.pair_cooldowns: dict[str, float] = {}
+        self.logs: list[dict] = []
 
     async def start(self, config: BotConfig):
         self.config = config
         self.config.enabled = True
         self.session_pnl = 0.0
         self.consecutive_losses = 0
+        self.stop_requested_after_current = False
+        self.cooldown_until = 0.0
+        self.logs.clear()
+        self._log("START", "Bot started")
         self.running = True
         await self.adapter.connect()
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._loop())
 
     async def stop(self):
+        self._log("STOP", "Bot stopped")
         self.running = False
         self.config.enabled = False
         if self._task and not self._task.done():
@@ -46,6 +55,15 @@ class TradingBot:
                     break
                 if await self._risk_limit_reached():
                     break
+                if self.stop_requested_after_current:
+                    self.last_analysis = {"status": "STOP_AFTER_CURRENT", "message": "Stopped after current trade"}
+                    await self.stop()
+                    break
+                if self.cooldown_until > time():
+                    remaining = int(self.cooldown_until - time())
+                    self.last_analysis = {"status": "COOLDOWN", "message": f"Waiting {remaining}s after loss"}
+                    await asyncio.sleep(min(remaining, 5))
+                    continue
                 await self._scheduled_trade_cycle()
             except asyncio.CancelledError:
                 break
@@ -67,16 +85,19 @@ class TradingBot:
 
     async def _auto_stop(self, reason: str):
         self.last_analysis = {"status": "AUTO_STOP", "message": reason, "pnl": self.session_pnl, "consecutive_losses": self.consecutive_losses}
+        self._log("AUTO_STOP", reason)
         send_auto_stop(reason, round(self.session_pnl, 2), self.consecutive_losses)
         await self.stop()
 
     async def _scheduled_trade_cycle(self):
         if self.config.use_analysis:
             self.last_analysis = {"status": "ANALYZING", "message": f"Scanning assets for {self.config.analysis_seconds}s in {self.config.min_confidence}% range"}
+            self._log("ANALYZING", self.last_analysis["message"])
             setup = await self._find_best_setup()
             if not setup:
                 self.current_signal = None
                 self.last_analysis = {"status": "NO_SIGNAL", "message": "No setup in selected confidence bucket"}
+                self._log("NO_SIGNAL", "No setup in selected confidence bucket")
                 return
             symbol, direction, confidence, reason = setup
         else:
@@ -102,6 +123,7 @@ class TradingBot:
             "status": "SCHEDULED",
         }
         self.last_analysis = {"status": "SIGNAL_SCHEDULED", "message": "Waiting server-time entry", **self.current_signal}
+        self._log("SIGNAL", f"{symbol} {direction} confidence={confidence}% entry={int(entry_time)}")
         send_signal_scheduled(self.current_signal)
 
         delay = max(0, execute_time - time())
@@ -125,6 +147,7 @@ class TradingBot:
         if self.current_signal:
             self.current_signal["status"] = "OPENED"
         self.last_analysis = {"status": "TRADE_OPEN", "symbol": symbol, "direction": direction, "confidence": confidence, "reason": reason, "message": "Order sent; waiting result"}
+        self._log("TRADE_OPEN", f"{symbol} {direction} amount={self.config.investment_amount}")
         return trade
 
     async def _resolve_manual_symbol(self, random_if_auto: bool = False) -> str:
@@ -140,7 +163,10 @@ class TradingBot:
             return [self.config.symbol]
         assets = await self.adapter.list_assets()
         otc = [a for a in assets if "OTC" in a.upper() or a.lower().endswith("otc")]
-        return (otc or assets or ["eur_usdotc"])[:12]
+        raw = (otc or assets or ["EURUSD_otc"])
+        now = time()
+        filtered = [a for a in raw if self.pair_cooldowns.get(a, 0) <= now]
+        return (filtered or raw)[:12]
 
     async def _find_best_setup(self):
         candidates = await self._candidate_assets()
@@ -231,9 +257,14 @@ class TradingBot:
         self.session_pnl += float(trade.pnl or 0)
         if trade.result == "LOSS":
             self.consecutive_losses += 1
+            if self.config.cooldown_after_loss_minutes > 0:
+                self.cooldown_until = time() + self.config.cooldown_after_loss_minutes * 60
+            if self.config.pair_cooldown_minutes > 0:
+                self.pair_cooldowns[trade.symbol] = time() + self.config.pair_cooldown_minutes * 60
         elif trade.result == "WIN":
             self.consecutive_losses = 0
         self.last_analysis = {"status": "RESULT", "symbol": trade.symbol, "direction": trade.direction, "result": trade.result, "pnl": trade.pnl, "session_pnl": self.session_pnl, "consecutive_losses": self.consecutive_losses}
+        self._log("RESULT", f"{trade.symbol} {trade.result} pnl={round(trade.pnl, 2)} session={round(self.session_pnl, 2)}")
         self.current_signal = None
         await self._risk_limit_reached()
 
@@ -250,5 +281,22 @@ class TradingBot:
         asyncio.create_task(self._settle_trade(trade, result_check_time))
         return trade
 
+    def request_stop_after_current(self):
+        self.stop_requested_after_current = True
+        self._log("STOP_AFTER_CURRENT", "Will stop after current trade/result")
+        self.last_analysis = {"status": "STOP_AFTER_CURRENT", "message": "Will stop after current trade/result"}
+
+    def _stats(self) -> dict:
+        closed = [t for t in self.history if t.result != "PENDING"]
+        wins = sum(1 for t in closed if t.result == "WIN")
+        losses = sum(1 for t in closed if t.result == "LOSS")
+        total = wins + losses
+        accuracy = round((wins / total) * 100, 2) if total else 0.0
+        return {"total": total, "wins": wins, "losses": losses, "accuracy": accuracy, "session_pnl": round(self.session_pnl, 2), "consecutive_losses": self.consecutive_losses}
+
+    def _log(self, event: str, message: str):
+        self.logs.insert(0, {"time": time(), "event": event, "message": message})
+        self.logs = self.logs[:200]
+
     def status(self):
-        return {"running": self.running, "config": self.config.model_dump(), "trades_count": len(self.history), "last_analysis": self.last_analysis, "current_signal": self.current_signal, "session_pnl": self.session_pnl, "consecutive_losses": self.consecutive_losses}
+        return {"running": self.running, "config": self.config.model_dump(), "trades_count": len(self.history), "last_analysis": self.last_analysis, "current_signal": self.current_signal, "session_pnl": self.session_pnl, "consecutive_losses": self.consecutive_losses, "stats": self._stats(), "logs": self.logs[:80], "stop_after_current": self.stop_requested_after_current}
