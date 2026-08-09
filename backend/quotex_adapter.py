@@ -82,16 +82,16 @@ class RealQuotexAdapter(QuotexAdapter):
         raise NotImplementedError("Real Quotex adapter not connected yet")
 
 class PyQuotexAdapter(QuotexAdapter):
-    """pyquotex / Quotex wrapper integration adapter.
+    """Adapter for mrgawade/pyquotex stable_api.
 
-    This adapter intentionally imports the wrapper dynamically because different
-    GitHub forks expose different module/class names. The default implementation
-    targets the common pattern:
+    Expected wrapper API:
+        client = Quotex(email=email, password=password)
+        check, reason = client.connect()
+        client.change_balance("PRACTICE")
+        status, trade_info = client.buy(amount, asset, direction, duration=60)
+        balance = client.get_balance()
 
-        from pyquotex.stable_api import Quotex
-
-    If your selected wrapper uses different method names, update this class only.
-    Credentials are kept in memory and are never written to disk.
+    Credentials stay in memory only. Demo/PRACTICE is the default.
     """
 
     def __init__(self, email: str, password: str, account_type: str = "demo"):
@@ -101,6 +101,7 @@ class PyQuotexAdapter(QuotexAdapter):
         self.mode = "REAL" if self.account_type == "real" else "DEMO"
         self.client = None
         self.connected = False
+        self.session_pnl = 0.0
 
     def _load_client_class(self):
         try:
@@ -108,91 +109,118 @@ class PyQuotexAdapter(QuotexAdapter):
             return Quotex
         except Exception as e:
             raise RuntimeError(
-                "pyquotex wrapper is not installed or has a different API. "
-                "Install your chosen wrapper on the backend, then adjust PyQuotexAdapter._load_client_class()."
+                "pyquotex is not installed. backend/requirements.txt now includes "
+                "git+https://github.com/mrgawade/pyquotex.git. Reinstall requirements on backend/Railway."
             ) from e
+
+    async def _maybe_await(self, value):
+        if hasattr(value, "__await__"):
+            return await value
+        return value
+
+    def _asset(self, symbol: str) -> str:
+        """Normalize common UI symbols to Quotex asset names.
+
+        Examples:
+            EUR/USD OTC -> EURUSD_otc
+            EURUSD-OTC  -> EURUSD_otc
+            EURUSD_otc  -> EURUSD_otc
+        """
+        clean = symbol.strip().replace("/", "").replace(" ", "").replace("-", "_")
+        if clean.upper().endswith("_OTC"):
+            return clean[:-4].upper() + "_otc"
+        return clean.upper()
 
     async def connect(self) -> None:
         Quotex = self._load_client_class()
         self.client = Quotex(email=self.email, password=self.password)
-        # Common wrappers use either connect() or async connect().
-        result = self.client.connect()
-        if hasattr(result, "__await__"):
-            result = await result
-        # Switch account balance mode if wrapper supports it.
-        for method_name in ("change_balance", "set_account_type", "set_balance_mode"):
-            method = getattr(self.client, method_name, None)
-            if callable(method):
-                try:
-                    r = method("PRACTICE" if self.mode == "DEMO" else "REAL")
-                    if hasattr(r, "__await__"):
-                        await r
-                    break
-                except Exception:
-                    pass
+        result = await self._maybe_await(self.client.connect())
+        check, reason = True, ""
+        if isinstance(result, tuple):
+            check = bool(result[0])
+            reason = str(result[1]) if len(result) > 1 else ""
+        elif isinstance(result, bool):
+            check = result
+        if not check:
+            raise RuntimeError(reason or "Quotex connect failed")
+
+        # Demo by default. Quotex wrappers usually call demo PRACTICE.
+        balance_mode = "REAL" if self.mode == "REAL" else "PRACTICE"
+        if hasattr(self.client, "change_balance"):
+            await self._maybe_await(self.client.change_balance(balance_mode))
         self.connected = True
 
     async def get_balance(self) -> BalanceResponse:
         if not self.connected:
             await self.connect()
-        balance = 0.0
-        for method_name in ("get_balance", "balance"):
-            method = getattr(self.client, method_name, None)
-            if callable(method):
-                value = method()
-                if hasattr(value, "__await__"):
-                    value = await value
-                try:
-                    balance = float(value)
-                    break
-                except Exception:
-                    pass
-        return BalanceResponse(balance=balance, mode=self.mode, session_pnl=0.0)
+        value = await self._maybe_await(self.client.get_balance())
+        try:
+            balance = float(value)
+        except Exception:
+            balance = 0.0
+        return BalanceResponse(balance=balance, mode=self.mode, session_pnl=self.session_pnl)
 
     async def latest_price(self, symbol: str) -> float:
         if not self.connected:
             await self.connect()
-        # Wrapper-specific. Try common candle methods; otherwise fail clearly.
-        for method_name in ("get_candles", "candles", "get_realtime_candles"):
-            method = getattr(self.client, method_name, None)
-            if callable(method):
-                data = method(symbol, 60, 2)
-                if hasattr(data, "__await__"):
-                    data = await data
-                try:
-                    last = data[-1] if isinstance(data, list) else list(data.values())[-1]
-                    return float(last.get("close") or last.get("price") or last["c"])
-                except Exception:
-                    continue
-        raise NotImplementedError("Selected pyquotex wrapper price method is not mapped yet")
+        asset = self._asset(symbol)
+        # Preferred pyquotex candle call. Forks differ; keep fallbacks.
+        for args in ((asset, 60, 2), (asset, 60), (asset,)):
+            try:
+                candles = await self._maybe_await(self.client.get_candles(*args))
+                if isinstance(candles, dict):
+                    values = list(candles.values())
+                    last = values[-1]
+                else:
+                    last = candles[-1]
+                if isinstance(last, dict):
+                    return float(last.get("close") or last.get("price") or last.get("c"))
+                if isinstance(last, (list, tuple)):
+                    return float(last[-1])
+            except Exception:
+                continue
+        raise NotImplementedError("pyquotex get_candles mapping failed for asset " + asset)
 
     async def place_trade(self, req: TradeRequest) -> TradeRecord:
         if not self.connected:
             await self.connect()
+        asset = self._asset(req.symbol)
         direction = "call" if req.direction == "CALL" else "put"
-        price = await self.latest_price(req.symbol)
-        for method_name in ("buy", "trade", "place_order"):
-            method = getattr(self.client, method_name, None)
-            if callable(method):
-                result = method(req.amount, req.symbol, direction, req.duration_seconds)
-                if hasattr(result, "__await__"):
-                    result = await result
-                trade_id = None
-                try:
-                    if isinstance(result, tuple):
-                        trade_id = str(result[1] if len(result) > 1 else result[0])
-                    elif isinstance(result, dict):
-                        trade_id = str(result.get("id") or result.get("order_id") or result)
-                    else:
-                        trade_id = str(result)
-                except Exception:
-                    trade_id = f"pyquotex_{int(time()*1000)}"
-                return TradeRecord(
-                    id=trade_id or f"pyquotex_{int(time()*1000)}",
-                    symbol=req.symbol,
-                    direction=req.direction,
-                    amount=req.amount,
-                    entry_price=price,
-                    paper=self.mode != "REAL",
-                )
-        raise NotImplementedError("Selected pyquotex wrapper trade method is not mapped yet")
+        entry_price = None
+        try:
+            entry_price = await self.latest_price(req.symbol)
+        except Exception:
+            pass
+
+        # Required wrapper API: status, trade_info = client.buy(amount, asset, direction, duration=60)
+        result = await self._maybe_await(
+            self.client.buy(req.amount, asset, direction, duration=req.duration_seconds)
+        )
+        status = False
+        trade_info = None
+        if isinstance(result, tuple):
+            status = bool(result[0])
+            trade_info = result[1] if len(result) > 1 else None
+        elif isinstance(result, dict):
+            status = bool(result.get("status", result.get("success", True)))
+            trade_info = result
+        else:
+            status = bool(result)
+            trade_info = result
+        if not status:
+            raise RuntimeError(f"Quotex buy failed: {trade_info}")
+
+        trade_id = f"quotex_{int(time()*1000)}"
+        if isinstance(trade_info, dict):
+            trade_id = str(trade_info.get("id") or trade_info.get("order_id") or trade_info.get("deal_id") or trade_id)
+        elif trade_info is not None:
+            trade_id = str(trade_info)
+
+        return TradeRecord(
+            id=trade_id,
+            symbol=asset,
+            direction=req.direction,
+            amount=req.amount,
+            entry_price=entry_price,
+            paper=self.mode != "REAL",
+        )
