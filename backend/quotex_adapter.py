@@ -284,3 +284,15 @@ class PyQuotexAdapter(QuotexAdapter):
             entry_price=entry_price,
             paper=self.mode != "REAL",
         )
+
+    async def check_trade_result(self, trade_id: str, timeout: int = 65):
+        if not self.connected:
+            await self.connect()
+        if hasattr(self.client, "check_win"):
+            return await self._maybe_await(self.client.check_win(trade_id, timeout))
+        if hasattr(self.client, "get_result"):
+            result = await self._maybe_await(self.client.get_result(trade_id))
+            if isinstance(result, tuple):
+                return result[0], result[1] if len(result) > 1 else 0
+            return result, 0
+        raise NotImplementedError("pyquotex result method is not mapped yet")

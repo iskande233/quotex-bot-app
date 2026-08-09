@@ -6,7 +6,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 class ApiService {
   static const String defaultBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://quotex-bot-app-1.onrender.com',
+    defaultValue: 'https://quotex-bot-app-2.onrender.com',
   );
   static String _baseUrl = defaultBaseUrl;
   static String get baseUrl => _baseUrl;

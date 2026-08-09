@@ -11,5 +11,9 @@ class Settings:
     default_timeframe: str = os.getenv("DEFAULT_TIMEFRAME", "M1")
     default_investment: float = float(os.getenv("DEFAULT_INVESTMENT", "1"))
     max_trades: int = int(os.getenv("MAX_TRADES", "10"))
+    telegram_enabled: bool = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"
+    telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    telegram_chat_id: str = os.getenv("TELEGRAM_CHAT_ID", "")
+    brand_name: str = os.getenv("BRAND_NAME", "SIGNALS QUOTEX DZ")
 
 settings = Settings()

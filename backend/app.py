@@ -8,6 +8,7 @@ from config import settings
 from models import BotConfig, TradeRequest, LoginRequest, LoginResponse
 from quotex_adapter import PaperQuotexAdapter, DemoQuotexAdapter, RealQuotexAdapter, PyQuotexAdapter, QuotexAdapter
 from bot import TradingBot
+from notifier import send_trade_opened, send_trade_result
 
 app = FastAPI(title="Quotex Bot App API", version="0.3.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -113,12 +114,14 @@ async def broadcast_loop():
                     seen_open.add(t.id)
                     event = "trade_opened"
                     extra = {"trade": t.model_dump()}
+                    send_trade_opened(t)
                     break
                 old = seen_results.get(t.id)
                 if t.result != "PENDING" and old != t.result:
                     seen_results[t.id] = t.result
                     event = "trade_result"
                     extra = {"trade": t.model_dump()}
+                    send_trade_result(t)
                     break
             await manager.broadcast(await snapshot(event, extra))
         except Exception:
