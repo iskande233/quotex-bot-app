@@ -1,25 +1,34 @@
 from __future__ import annotations
 import asyncio
-from random import random
 from time import time
 from typing import Set
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 from models import BotConfig, TradeRequest
-from quotex_adapter import PaperQuotexAdapter, RealQuotexAdapter
+from quotex_adapter import PaperQuotexAdapter, DemoQuotexAdapter, RealQuotexAdapter, QuotexAdapter
 from bot import TradingBot
 
-app = FastAPI(title="Quotex Bot App API", version="0.2.0")
+app = FastAPI(title="Quotex Bot App API", version="0.3.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-adapter = PaperQuotexAdapter() if settings.paper_mode else RealQuotexAdapter()
+def make_adapter(mode: str) -> QuotexAdapter:
+    mode = (mode or "paper").lower()
+    if mode == "demo":
+        return DemoQuotexAdapter()
+    if mode == "real":
+        return RealQuotexAdapter()
+    return PaperQuotexAdapter()
+
+adapter: QuotexAdapter = make_adapter(settings.quotex_mode if not settings.paper_mode else "paper")
 bot = TradingBot(adapter)
 
 class WsManager:
     def __init__(self):
         self.clients: Set[WebSocket] = set()
         self.chart_points: list[dict] = []
+        self.candles: list[dict] = []
+        self._current_candle: dict | None = None
 
     async def connect(self, ws: WebSocket):
         await ws.accept()
@@ -27,6 +36,27 @@ class WsManager:
 
     def disconnect(self, ws: WebSocket):
         self.clients.discard(ws)
+
+    def add_price(self, ts: int, price: float):
+        self.chart_points.append({"time": ts, "price": price})
+        self.chart_points = self.chart_points[-120:]
+        minute = ts - (ts % 60)
+        c = self._current_candle
+        if c is None or c["time"] != minute:
+            if c is not None:
+                self.candles.append(c)
+                self.candles = self.candles[-80:]
+            self._current_candle = {"time": minute, "open": price, "high": price, "low": price, "close": price}
+        else:
+            c["high"] = max(c["high"], price)
+            c["low"] = min(c["low"], price)
+            c["close"] = price
+
+    def candle_payload(self) -> list[dict]:
+        data = list(self.candles)
+        if self._current_candle is not None:
+            data.append(self._current_candle)
+        return data[-80:]
 
     async def broadcast(self, payload: dict):
         dead = []
@@ -51,33 +81,53 @@ async def on_shutdown():
     if _broadcast_task:
         _broadcast_task.cancel()
 
-async def snapshot() -> dict:
+async def snapshot(event: str = "snapshot", extra: dict | None = None) -> dict:
     balance = await adapter.get_balance()
     price = await adapter.latest_price(bot.config.symbol)
     now = int(time())
-    manager.chart_points.append({"time": now, "price": price})
-    manager.chart_points = manager.chart_points[-80:]
-    return {
-        "type": "snapshot",
+    manager.add_price(now, price)
+    payload = {
+        "type": event,
         "server_time": now,
         "price": price,
         "chart": manager.chart_points,
+        "candles": manager.candle_payload(),
         "balance": balance.model_dump(),
         "status": bot.status(),
         "history": [t.model_dump() for t in bot.history[:50]],
     }
+    if extra:
+        payload.update(extra)
+    return payload
 
 async def broadcast_loop():
+    seen_results: dict[str, str] = {}
+    seen_open: set[str] = set()
     while True:
         try:
-            await manager.broadcast(await snapshot())
+            # Detect trade open/result events for UI popups.
+            event = "snapshot"
+            extra = {}
+            for t in bot.history[:5]:
+                if t.id not in seen_open:
+                    seen_open.add(t.id)
+                    event = "trade_opened"
+                    extra = {"trade": t.model_dump()}
+                    break
+                old = seen_results.get(t.id)
+                if t.result != "PENDING" and old != t.result:
+                    seen_results[t.id] = t.result
+                    event = "trade_result"
+                    extra = {"trade": t.model_dump()}
+                    break
+            await manager.broadcast(await snapshot(event, extra))
         except Exception:
             pass
         await asyncio.sleep(1)
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "paper_mode": settings.paper_mode}
+    return {"ok": True, "mode": getattr(adapter, "mode", "UNKNOWN")}
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
@@ -85,26 +135,34 @@ async def websocket_endpoint(ws: WebSocket):
     try:
         await ws.send_json(await snapshot())
         while True:
-            # Keep socket alive and allow future client commands.
             await ws.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(ws)
     except Exception:
         manager.disconnect(ws)
 
+@app.post("/api/v1/mode/{mode}")
+async def switch_mode(mode: str):
+    global adapter, bot
+    if mode.lower() not in {"paper", "demo", "real"}:
+        raise HTTPException(status_code=400, detail="mode must be paper, demo, or real")
+    await bot.stop()
+    adapter = make_adapter(mode)
+    bot = TradingBot(adapter)
+    await manager.broadcast(await snapshot("mode_changed", {"mode": getattr(adapter, "mode", "UNKNOWN")}))
+    return {"success": True, "mode": getattr(adapter, "mode", "UNKNOWN")}
+
 @app.post("/api/v1/bot/start")
 async def start_bot(config: BotConfig):
     await bot.start(config)
-    payload = {"success": True, "status": bot.status()}
-    await manager.broadcast(await snapshot())
-    return payload
+    await manager.broadcast(await snapshot("bot_started"))
+    return {"success": True, "status": bot.status()}
 
 @app.post("/api/v1/bot/stop")
 async def stop_bot():
     await bot.stop()
-    payload = {"success": True, "status": bot.status()}
-    await manager.broadcast(await snapshot())
-    return payload
+    await manager.broadcast(await snapshot("bot_stopped"))
+    return {"success": True, "status": bot.status()}
 
 @app.get("/api/v1/bot/status")
 async def bot_status():
@@ -115,7 +173,7 @@ async def place_trade(req: TradeRequest):
     try:
         trade = await adapter.place_trade(req)
         bot.history.insert(0, trade)
-        await manager.broadcast(await snapshot())
+        await manager.broadcast(await snapshot("trade_opened", {"trade": trade.model_dump()}))
         return trade
     except NotImplementedError as e:
         raise HTTPException(status_code=501, detail=str(e))

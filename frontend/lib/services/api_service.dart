@@ -39,6 +39,11 @@ class ApiService {
     return _decode(res);
   }
 
+  static Future<Map<String, dynamic>> switchMode(String mode) async {
+    final res = await http.post(Uri.parse('$baseUrl/api/v1/mode/$mode'));
+    return _decode(res);
+  }
+
   static Map<String, dynamic> _decode(http.Response res) {
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw Exception('HTTP ${res.statusCode}: ${res.body}');

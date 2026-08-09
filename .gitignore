@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+build/
+.dart_tool/
+frontend/.dart_tool/
+frontend/build/
+.DS_Store
+.idea/
+*.iml

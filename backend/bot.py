@@ -97,6 +97,11 @@ class TradingBot:
         win = exit_price > (trade.entry_price or exit_price) if trade.direction == "CALL" else exit_price < (trade.entry_price or exit_price)
         trade.result = "WIN" if win else "LOSS"
         trade.pnl = trade.amount * 0.86 if win else -trade.amount
+        # Paper/Demo account balance simulation.
+        if hasattr(self.adapter, "balance"):
+            self.adapter.balance += trade.pnl
+        if hasattr(self.adapter, "session_pnl"):
+            self.adapter.session_pnl += trade.pnl
 
     def status(self):
-        return {"running": self.running, "config": self.config, "trades_count": len(self.history)}
+        return {"running": self.running, "config": self.config.model_dump(), "trades_count": len(self.history)}
