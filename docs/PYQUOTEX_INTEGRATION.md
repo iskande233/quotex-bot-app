@@ -43,16 +43,18 @@ Different GitHub forks may expose different names/methods, so only this adapter 
 
 ## Install selected wrapper
 
-After selecting the exact wrapper/fork, install it in the backend environment. Example:
+The originally requested repository `https://github.com/mrgawade/pyquotex.git` is not accessible from Railway at build time (GitHub asks for username), so it is not enabled in `requirements.txt` to avoid breaking deployment.
+
+When you provide a public working wrapper, add it to `backend/requirements.txt`, for example:
 
 ```bash
-pip install pyquotex
+pyquotex
 ```
 
 or:
 
 ```bash
-pip install git+https://github.com/OWNER/REPO.git
+git+https://github.com/OWNER/REPO.git
 ```
 
 Then update `PyQuotexAdapter` method mappings if needed:
