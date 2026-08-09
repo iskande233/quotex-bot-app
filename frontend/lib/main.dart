@@ -5,7 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'services/api_service.dart';
 
-void main() => runApp(const QuotexBotApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await ApiService.init();
+  runApp(const QuotexBotApp());
+}
 
 class QuotexBotApp extends StatelessWidget {
   const QuotexBotApp({super.key});
@@ -34,6 +38,7 @@ class _BotHomePageState extends State<BotHomePage> {
   final symbolCtrl = TextEditingController(text: 'EURUSD-OTC');
   final amountCtrl = TextEditingController(text: '1');
   final maxTradesCtrl = TextEditingController(text: '10');
+  final serverUrlCtrl = TextEditingController(text: ApiService.baseUrl);
   String timeframe = 'M1';
   String selectedMode = 'paper';
   WebSocketChannel? channel;
@@ -63,6 +68,7 @@ class _BotHomePageState extends State<BotHomePage> {
     symbolCtrl.dispose();
     amountCtrl.dispose();
     maxTradesCtrl.dispose();
+    serverUrlCtrl.dispose();
     super.dispose();
   }
 
@@ -171,13 +177,17 @@ class _BotHomePageState extends State<BotHomePage> {
       maxTrades: maxTradesCtrl.text,
       timeframe: timeframe,
       mode: selectedMode,
-      onSave: (symbol, amount, maxTrades, tf, m) {
+      serverUrl: serverUrlCtrl.text,
+      onSave: (symbol, amount, maxTrades, tf, m, serverUrl) async {
         symbolCtrl.text = symbol;
         amountCtrl.text = amount;
         maxTradesCtrl.text = maxTrades;
         timeframe = tf;
         selectedMode = m;
+        serverUrlCtrl.text = serverUrl;
+        await ApiService.setBaseUrl(serverUrl);
         setState(() {});
+        _connectWs();
       },
     )));
   }
@@ -199,7 +209,7 @@ class _BotHomePageState extends State<BotHomePage> {
             Expanded(child: ElevatedButton.icon(onPressed: running ? _stop : null, icon: const Icon(Icons.stop), label: const Text('STOP'))),
           ]),
           const SizedBox(height: 12),
-          _Panel(title: 'Configuration', child: Text('${symbolCtrl.text} | $timeframe | Amount: ${amountCtrl.text} | Max: ${maxTradesCtrl.text} | Mode: ${selectedMode.toUpperCase()}')),
+          _Panel(title: 'Configuration', child: Text('${symbolCtrl.text} | $timeframe | Amount: ${amountCtrl.text} | Max: ${maxTradesCtrl.text} | Mode: ${selectedMode.toUpperCase()}\nBackend: ${ApiService.baseUrl}')),
           const SizedBox(height: 12),
           _Panel(title: 'Live Account', child: Text('Mode: $mode\nBalance: ${balance.toStringAsFixed(2)}\nSession PnL: ${pnl.toStringAsFixed(2)}\nBot: ${running ? 'RUNNING' : 'STOPPED'}\n$lastMessage')),
           const SizedBox(height: 12),
@@ -290,9 +300,9 @@ class _LoginPageState extends State<LoginPage> {
 }
 
 class SettingsPage extends StatefulWidget {
-  final String symbol, amount, maxTrades, timeframe, mode;
-  final void Function(String symbol, String amount, String maxTrades, String timeframe, String mode) onSave;
-  const SettingsPage({super.key, required this.symbol, required this.amount, required this.maxTrades, required this.timeframe, required this.mode, required this.onSave});
+  final String symbol, amount, maxTrades, timeframe, mode, serverUrl;
+  final Future<void> Function(String symbol, String amount, String maxTrades, String timeframe, String mode, String serverUrl) onSave;
+  const SettingsPage({super.key, required this.symbol, required this.amount, required this.maxTrades, required this.timeframe, required this.mode, required this.serverUrl, required this.onSave});
   @override
   State<SettingsPage> createState() => _SettingsPageState();
 }
@@ -301,6 +311,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController symbolCtrl = TextEditingController(text: widget.symbol);
   late final TextEditingController amountCtrl = TextEditingController(text: widget.amount);
   late final TextEditingController maxTradesCtrl = TextEditingController(text: widget.maxTrades);
+  late final TextEditingController serverUrlCtrl = TextEditingController(text: widget.serverUrl);
   late String timeframe = widget.timeframe;
   late String mode = widget.mode;
 
@@ -312,6 +323,7 @@ class _SettingsPageState extends State<SettingsPage> {
         TextField(controller: symbolCtrl, decoration: const InputDecoration(labelText: 'Symbol')),
         TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Investment Amount')),
         TextField(controller: maxTradesCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Max Trades')),
+        TextField(controller: serverUrlCtrl, keyboardType: TextInputType.url, decoration: const InputDecoration(labelText: 'Online Backend URL / Railway URL')),
         const SizedBox(height: 16),
         DropdownButtonFormField<String>(value: timeframe, items: const [DropdownMenuItem(value: 'M1', child: Text('M1'))], onChanged: (v) => setState(() => timeframe = v ?? 'M1'), decoration: const InputDecoration(labelText: 'Timeframe')),
         const SizedBox(height: 16),
@@ -321,9 +333,9 @@ class _SettingsPageState extends State<SettingsPage> {
           DropdownMenuItem(value: 'real', child: Text('Real Adapter Placeholder')),
         ], onChanged: (v) => setState(() => mode = v ?? 'paper'), decoration: const InputDecoration(labelText: 'Execution Mode')),
         const SizedBox(height: 22),
-        ElevatedButton.icon(onPressed: () {
-          widget.onSave(symbolCtrl.text, amountCtrl.text, maxTradesCtrl.text, timeframe, mode);
-          Navigator.pop(context);
+        ElevatedButton.icon(onPressed: () async {
+          await widget.onSave(symbolCtrl.text, amountCtrl.text, maxTradesCtrl.text, timeframe, mode, serverUrlCtrl.text);
+          if (context.mounted) Navigator.pop(context);
         }, icon: const Icon(Icons.save), label: const Text('Save Settings')),
         const SizedBox(height: 14),
         const Text('Safety: Paper/Demo are simulated. Real adapter requires a compliant user-owned Quotex session integration.', style: TextStyle(color: Colors.amber)),

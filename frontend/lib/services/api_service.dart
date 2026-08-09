@@ -1,11 +1,38 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 class ApiService {
-  // Android emulator: 10.0.2.2. Physical phone: replace with your PC/server IP.
-  static const String baseUrl = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://10.0.2.2:8000');
-  static const String wsUrl = String.fromEnvironment('API_WS_URL', defaultValue: 'ws://10.0.2.2:8000/ws');
+  static const String defaultBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://10.0.2.2:8000',
+  );
+
+  static String _baseUrl = defaultBaseUrl;
+
+  static String get baseUrl => _baseUrl;
+  static String get wsUrl {
+    final clean = _baseUrl.replaceAll(RegExp(r'/+$'), '');
+    if (clean.startsWith('https://')) return clean.replaceFirst('https://', 'wss://') + '/ws';
+    if (clean.startsWith('http://')) return clean.replaceFirst('http://', 'ws://') + '/ws';
+    return 'ws://$clean/ws';
+  }
+
+  static Future<void> init() async {
+    final prefs = await SharedPreferences.getInstance();
+    _baseUrl = prefs.getString('api_base_url')?.trim().replaceAll(RegExp(r'/+$'), '') ?? defaultBaseUrl;
+  }
+
+  static Future<void> setBaseUrl(String url) async {
+    var clean = url.trim().replaceAll(RegExp(r'/+$'), '');
+    if (clean.isNotEmpty && !clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = 'https://$clean';
+    }
+    _baseUrl = clean.isEmpty ? defaultBaseUrl : clean;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('api_base_url', _baseUrl);
+  }
 
   static WebSocketChannel connectWs() => WebSocketChannel.connect(Uri.parse(wsUrl));
 
@@ -38,7 +65,6 @@ class ApiService {
     final res = await http.get(Uri.parse('$baseUrl/api/v1/bot/status'));
     return _decode(res);
   }
-
 
   static Future<Map<String, dynamic>> login({
     required String email,
