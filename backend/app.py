@@ -84,13 +84,28 @@ async def on_shutdown():
 
 async def snapshot(event: str = "snapshot", extra: dict | None = None) -> dict:
     balance = await adapter.get_balance()
-    price = await adapter.latest_price(bot.config.symbol)
     now = int(time())
-    manager.add_price(now, price)
+    price = 0.0
+    price_symbol = bot.config.symbol
+    try:
+        # AUTO_OTC is a scanner mode, not a real Quotex asset. Pick a real asset for dashboard price.
+        if price_symbol.strip().upper() in {"AUTO", "AUTO_OTC", "OTC_AUTO"}:
+            assets = await adapter.list_assets()
+            otc = [a for a in assets if "OTC" in a.upper()]
+            price_symbol = (otc or assets or ["EURUSD-OTC"])[0]
+        price = await adapter.latest_price(price_symbol)
+        manager.add_price(now, price)
+    except Exception as e:
+        # Never let dashboard snapshot break START/STOP. Keep the UI alive and expose the error.
+        if not manager.chart_points:
+            manager.add_price(now, 0.0)
+        extra = dict(extra or {})
+        extra["price_error"] = str(e)
     payload = {
         "type": event,
         "server_time": now,
         "price": price,
+        "price_symbol": price_symbol,
         "chart": manager.chart_points,
         "candles": manager.candle_payload(),
         "balance": balance.model_dump(),
@@ -209,12 +224,15 @@ async def resolve_symbol(config: BotConfig) -> BotConfig:
 
 @app.post("/api/v1/bot/start")
 async def start_bot(config: BotConfig):
-    config = await resolve_symbol(config)
-    await bot.start(config)
-    balance = await adapter.get_balance()
-    send_bot_started(balance, config)
-    await manager.broadcast(await snapshot("bot_started"))
-    return {"success": True, "status": bot.status()}
+    try:
+        config = await resolve_symbol(config)
+        await bot.start(config)
+        balance = await adapter.get_balance()
+        send_bot_started(balance, config)
+        await manager.broadcast(await snapshot("bot_started"))
+        return {"success": True, "status": bot.status()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Bot start failed: {e}")
 
 @app.post("/api/v1/bot/stop")
 async def stop_bot():
