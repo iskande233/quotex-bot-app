@@ -23,8 +23,24 @@ class ApiService {
   }
 
   static Future<void> setBaseUrl(String url) async {
-    var clean = url.trim().replaceAll(RegExp(r'/+$'), '');
-    if (clean.isNotEmpty && !clean.startsWith('http://') && !clean.startsWith('https://')) clean = 'https://$clean';
+    var clean = url
+        .trim()
+        .replaceAll(RegExp(r'\s+'), '')
+        .replaceAll('[', '')
+        .replaceAll(']', '')
+        .replaceAll('(', '')
+        .replaceAll(')', '')
+        .replaceAll(RegExp(r'/+$'), '');
+    if (clean.isNotEmpty && !clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = 'https://$clean';
+    }
+    // If user pastes a full API endpoint, keep only scheme + host.
+    try {
+      final uri = Uri.parse(clean);
+      if (uri.hasScheme && uri.host.isNotEmpty) {
+        clean = '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}';
+      }
+    } catch (_) {}
     _baseUrl = clean.isEmpty ? defaultBaseUrl : clean;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('api_base_url', _baseUrl);
