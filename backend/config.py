@@ -15,5 +15,7 @@ class Settings:
     telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "7197308817:AAFU77fDScCj_fQJNiElv8IFCLQ08kkufCM")
     telegram_chat_id: str = os.getenv("TELEGRAM_CHAT_ID", "@ltc_36")
     brand_name: str = os.getenv("BRAND_NAME", "SIGNALS QUOTEX DZ")
+    entry_lead_seconds: float = float(os.getenv("ENTRY_LEAD_SECONDS", "2.0"))
+    result_delay_seconds: float = float(os.getenv("RESULT_DELAY_SECONDS", "5.0"))
 
 settings = Settings()

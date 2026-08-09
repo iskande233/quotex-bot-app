@@ -102,6 +102,8 @@ def send_signal_scheduled(signal: dict) -> None:
 📊 *الزوج:* {fmt_symbol(signal.get('symbol'))}
 ⏱️ *المدة:* M1
 🕒 *وقت الدخول:* {_time(signal.get('entry_time'))}
+⚙️ *إرسال الأمر:* قبل الدخول بـ {settings.entry_lead_seconds}s
+🏁 *فحص النتيجة:* بعد الإغلاق بـ {settings.result_delay_seconds}s
 💵 *المبلغ:* {signal.get('amount')}
 ⚡ *القوة:* {confidence}%
 {chart} *الاتجاه:* {direction_text}

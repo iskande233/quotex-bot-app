@@ -215,24 +215,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final dir = sig['direction']?.toString() ?? '';
     final entry = sig['entry_time'];
     final entrySec = entry == null ? 0 : (entry as num).toInt();
+    final execute = sig['execute_time'];
+    final resultCheck = sig['result_check_time'];
+    final executeSec = execute == null ? 0 : (execute as num).toInt();
+    final resultSec = resultCheck == null ? 0 : (resultCheck as num).toInt();
     final left = entrySec > 0 ? (entrySec - nowSec).clamp(0, 999) : 0;
+    final execLeft = executeSec > 0 ? (executeSec - nowSec).clamp(0, 999) : 0;
+    final resultLeft = resultSec > 0 ? (resultSec - nowSec).clamp(0, 999) : 0;
     return ProCard(border: gold, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       const Text('⚡ الإشارة الحالية', style: TextStyle(color: gold, fontWeight: FontWeight.w900, fontSize: 16)),
       LinearProgressIndicator(value: left == 0 ? 1 : (60 - left.clamp(0, 60)) / 60, color: gold, backgroundColor: Colors.white10),
       const SizedBox(height: 12),
-      _dataGrid({'الزوج': '${sig['symbol']}', 'المدة': 'M1', 'الدخول بعد': '${left}s', 'القوة': '${sig['confidence']}%', 'الاتجاه': dir == 'CALL' ? 'CALL 🔼' : 'PUT 🔻'}),
+      _dataGrid({'الزوج': '${sig['symbol']}', 'المدة': 'M1', 'الدخول الرسمي بعد': '${left}s', 'إرسال الأمر بعد': '${execLeft}s', 'القوة': '${sig['confidence']}%', 'الاتجاه': dir == 'CALL' ? 'CALL 🔼' : 'PUT 🔻'}),
     ]));
   }
 
   Widget _tradeSignal(Map<String, dynamic> t) {
     final result = t['result']?.toString() ?? 'PENDING';
     final dir = t['direction']?.toString() ?? '';
+    final rct = t['result_check_time'];
+    final resultLeft = rct == null ? 0 : (((rct as num).toDouble()).toInt() - nowSec).clamp(0, 999);
     return ProCard(border: result == 'WIN' ? green : result == 'LOSS' ? red : gold, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       const Text('💲 صفقة جديدة 💲', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: gold)),
       const Divider(color: Colors.white38),
       _dataGrid({'الزوج': '${t['symbol']}', 'المدة': 'M1', 'المبلغ': '${t['amount']}', 'الاتجاه': dir == 'CALL' ? 'CALL 🔼 شراء' : 'PUT 🔻 بيع'}),
       const Divider(color: Colors.white38),
-      Text(result == 'PENDING' ? '⏳ النتيجة: قيد الانتظار' : (result == 'WIN' ? '🟢💰 ربح مباشر WIN ✅' : '💔 خسارة LOSS ❌'), textAlign: TextAlign.center, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: result == 'WIN' ? green : result == 'LOSS' ? red : gold)),
+      Text(result == 'PENDING' ? '⏳ النتيجة: قيد الانتظار • بعد ${resultLeft}s' : (result == 'WIN' ? '🟢💰 ربح مباشر WIN ✅' : '💔 خسارة LOSS ❌'), textAlign: TextAlign.center, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: result == 'WIN' ? green : result == 'LOSS' ? red : gold)),
     ]));
   }
 

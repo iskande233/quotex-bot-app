@@ -5,6 +5,7 @@ from time import time
 from typing import List
 from models import BotConfig, TradeRequest, TradeRecord
 from quotex_adapter import QuotexAdapter
+from config import settings
 from indicators import ema, rsi, macd
 from notifier import send_signal_scheduled
 
@@ -63,37 +64,45 @@ class TradingBot:
             reason = "Random/direct mode without analysis"
 
         entry_time = self._next_minute_boundary()
+        execute_time = max(time(), entry_time - settings.entry_lead_seconds)
+        expiry_time = entry_time + 60.0
+        result_check_time = expiry_time + settings.result_delay_seconds
         self.current_signal = {
             "symbol": symbol,
             "direction": direction,
             "confidence": confidence,
             "reason": reason,
             "entry_time": entry_time,
+            "execute_time": execute_time,
+            "expiry_time": expiry_time,
+            "result_check_time": result_check_time,
             "amount": self.config.investment_amount,
             "status": "SCHEDULED",
         }
-        self.last_analysis = {"status": "SIGNAL_SCHEDULED", **self.current_signal}
+        self.last_analysis = {"status": "SIGNAL_SCHEDULED", "message": "Waiting server-time entry", **self.current_signal}
         send_signal_scheduled(self.current_signal)
 
-        delay = max(0, entry_time - time())
+        delay = max(0, execute_time - time())
         while delay > 0 and self.running:
-            await asyncio.sleep(min(1, delay))
-            delay = entry_time - time()
+            await asyncio.sleep(min(0.25, delay))
+            delay = execute_time - time()
         if not self.running:
             return
 
-        trade = await self._place_trade(symbol, direction, confidence, reason)
-        await self._settle_trade(trade)
+        trade = await self._place_trade(symbol, direction, confidence, reason, entry_time, result_check_time)
+        await self._settle_trade(trade, result_check_time)
         # after result, loop starts again and sends the next signal
 
-    async def _place_trade(self, symbol: str, direction: str, confidence: int, reason: str) -> TradeRecord:
-        self.last_analysis = {"status": "PLACING_TRADE", "symbol": symbol, "direction": direction, "confidence": confidence, "reason": reason}
+    async def _place_trade(self, symbol: str, direction: str, confidence: int, reason: str, entry_time: float, result_check_time: float) -> TradeRecord:
+        self.last_analysis = {"status": "PLACING_TRADE", "symbol": symbol, "direction": direction, "confidence": confidence, "reason": reason, "message": f"Sending order {settings.entry_lead_seconds}s before official entry"}
         req = TradeRequest(symbol=symbol, direction=direction, amount=self.config.investment_amount, duration_seconds=60)
         trade = await self.adapter.place_trade(req)
+        trade.scheduled_entry_time = entry_time
+        trade.result_check_time = result_check_time
         self.history.insert(0, trade)
         if self.current_signal:
             self.current_signal["status"] = "OPENED"
-        self.last_analysis = {"status": "TRADE_OPENED", "symbol": symbol, "direction": direction, "confidence": confidence, "reason": reason}
+        self.last_analysis = {"status": "TRADE_OPEN", "symbol": symbol, "direction": direction, "confidence": confidence, "reason": reason, "message": "Order sent; waiting result"}
         return trade
 
     async def _resolve_manual_symbol(self, random_if_auto: bool = False) -> str:
@@ -173,19 +182,22 @@ class TradingBot:
         reason = ", ".join(reason_parts[:4]) or "fast price action"
         return asset, direction, confidence, reason
 
-    async def _settle_trade(self, trade: TradeRecord):
+    async def _settle_trade(self, trade: TradeRecord, result_check_time: float | None = None):
         self.last_analysis = {"status": "WAITING_RESULT", "symbol": trade.symbol, "direction": trade.direction, "message": "Waiting 60s result"}
         result_used = False
         if hasattr(self.adapter, "check_trade_result"):
             try:
-                status, profit = await self.adapter.check_trade_result(trade.id, 65)
+                timeout = int(60 + settings.result_delay_seconds + settings.entry_lead_seconds + 10)
+                status, profit = await self.adapter.check_trade_result(trade.id, timeout)
                 trade.result = "WIN" if str(status).lower() == "win" else "LOSS"
                 trade.pnl = float(profit) if profit is not None else (trade.amount * 0.86 if trade.result == "WIN" else -trade.amount)
                 trade.closed_at = time(); result_used = True
             except Exception:
                 result_used = False
         if not result_used:
-            await asyncio.sleep(60)
+            target = result_check_time or (time() + 60 + settings.result_delay_seconds)
+            wait = max(0, target - time())
+            await asyncio.sleep(wait)
             exit_price = await self.adapter.latest_price(trade.symbol)
             trade.exit_price = exit_price; trade.closed_at = time()
             win = exit_price > (trade.entry_price or exit_price) if trade.direction == "CALL" else exit_price < (trade.entry_price or exit_price)
@@ -202,8 +214,10 @@ class TradingBot:
     async def open_random_trade_now(self, amount: float = 1.0) -> TradeRecord:
         symbol = await self._resolve_manual_symbol(random_if_auto=True)
         direction = random.choice(["CALL", "PUT"])
-        trade = await self._place_trade(symbol, direction, 0, "Immediate random test trade")
-        asyncio.create_task(self._settle_trade(trade))
+        entry_time = time()
+        result_check_time = entry_time + 60 + settings.result_delay_seconds
+        trade = await self._place_trade(symbol, direction, 0, "Immediate random test trade", entry_time, result_check_time)
+        asyncio.create_task(self._settle_trade(trade, result_check_time))
         return trade
 
     def status(self):

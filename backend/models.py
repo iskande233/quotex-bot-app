@@ -19,6 +19,8 @@ class TradeRecord(BaseModel):
     entry_price: Optional[float] = None
     exit_price: Optional[float] = None
     opened_at: float = Field(default_factory=time)
+    scheduled_entry_time: Optional[float] = None
+    result_check_time: Optional[float] = None
     closed_at: Optional[float] = None
     result: Result = "PENDING"
     pnl: float = 0.0
