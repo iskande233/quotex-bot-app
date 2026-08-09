@@ -59,3 +59,12 @@ Codemagic release workflow uses `--split-per-abi`, `--obfuscate`, and `--split-d
 ## Launcher icon
 
 The app icon source is `frontend/assets/app_icon.png` and Codemagic generates Android launcher icons during the build using `flutter_launcher_icons`.
+
+## Analysis/Direct modes
+
+The dashboard now supports two execution modes:
+
+- Direct mode: no analysis; trades selected asset using chosen CALL/PUT.
+- Analysis mode: scans available OTC assets for up to 20 seconds by default and only trades when confidence is at least 80%.
+
+Telegram notifications are sent from backend when `TELEGRAM_ENABLED=true`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID` are set in hosting environment variables.

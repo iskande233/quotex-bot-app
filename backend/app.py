@@ -197,6 +197,9 @@ async def switch_mode(mode: str):
     return {"success": True, "mode": getattr(adapter, "mode", "UNKNOWN")}
 
 async def resolve_symbol(config: BotConfig) -> BotConfig:
+    # In analysis mode, keep AUTO_OTC so bot can scan all OTC assets and choose best.
+    if config.use_analysis:
+        return config
     if config.symbol.strip().upper() not in {"AUTO", "AUTO_OTC", "OTC_AUTO"}:
         return config
     assets = await adapter.list_assets()

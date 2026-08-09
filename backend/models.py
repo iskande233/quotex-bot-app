@@ -35,6 +35,10 @@ class BotConfig(BaseModel):
     investment_amount: float = 1.0
     max_trades: int = 10
     enabled: bool = False
+    use_analysis: bool = True
+    manual_direction: Optional[Direction] = "CALL"
+    min_confidence: int = Field(default=80, ge=50, le=99)
+    analysis_seconds: int = Field(default=20, ge=5, le=60)
 
 class BotStatus(BaseModel):
     running: bool

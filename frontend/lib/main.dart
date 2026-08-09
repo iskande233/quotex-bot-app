@@ -144,6 +144,10 @@ class _BotDashboardState extends State<BotDashboard> {
   double balance = 0, pnl = 0, price = 0;
   String mode = 'DEMO';
   String selectedAsset = 'AUTO_OTC';
+  bool useAnalysis = true;
+  String manualDirection = 'CALL';
+  int minConfidence = 80;
+  int analysisSeconds = 20;
   List<String> assets = ['AUTO_OTC'];
   List<dynamic> history = [];
   Map<String, dynamic>? latestTrade;
@@ -177,6 +181,13 @@ class _BotDashboardState extends State<BotDashboard> {
         pnl = (bal['session_pnl'] as num?)?.toDouble() ?? pnl;
         mode = bal['mode']?.toString() ?? mode;
         running = st['running'] == true;
+        final cfg = st['config'] as Map<String, dynamic>?;
+        if (cfg != null) {
+          useAnalysis = cfg['use_analysis'] == true;
+          manualDirection = (cfg['manual_direction'] ?? manualDirection).toString();
+          minConfidence = (cfg['min_confidence'] as num?)?.toInt() ?? minConfidence;
+          analysisSeconds = (cfg['analysis_seconds'] as num?)?.toInt() ?? analysisSeconds;
+        }
         price = (data['price'] as num?)?.toDouble() ?? price;
         history = (data['history'] as List?) ?? history;
         if (trade != null) latestTrade = trade;
@@ -203,7 +214,7 @@ class _BotDashboardState extends State<BotDashboard> {
 
   Future<void> _start() async {
     try {
-      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 1, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10);
+      await ApiService.startBot(symbol: selectedAsset, amount: double.tryParse(amountCtrl.text) ?? 1, maxTrades: int.tryParse(maxTradesCtrl.text) ?? 10, useAnalysis: useAnalysis, manualDirection: manualDirection, minConfidence: minConfidence, analysisSeconds: analysisSeconds);
       setState(() => status = 'Bot started');
     } catch (e) { setState(() => status = 'Start failed: $e'); }
   }
@@ -230,11 +241,21 @@ class _BotDashboardState extends State<BotDashboard> {
     );
   }
 
-  Widget _accountCard() => _panel('Live Account', 'Mode: $mode\nBalance: ${balance.toStringAsFixed(2)}\nSession PnL: ${pnl.toStringAsFixed(2)}\nPrice: ${price.toStringAsFixed(6)}\n$status');
+  Widget _accountCard() => _panel('Live Account', 'Mode: $mode\nBalance: ${balance.toStringAsFixed(2)}\nSession PnL: ${pnl.toStringAsFixed(2)}\nPrice: ${price.toStringAsFixed(6)}\nMode: ${useAnalysis ? 'Analysis +$minConfidence%' : 'Direct $manualDirection'}\n$status');
 
   Widget _controls() => Container(
     padding: const EdgeInsets.all(14), decoration: _box(), child: Column(children: [
       DropdownButtonFormField<String>(value: assets.contains(selectedAsset) ? selectedAsset : 'AUTO_OTC', decoration: const InputDecoration(labelText: 'زوج التداول'), items: assets.map((a) => DropdownMenuItem(value: a, child: Text(a == 'AUTO_OTC' ? 'Auto OTC' : a))).toList(), onChanged: (v) => setState(() => selectedAsset = v ?? 'AUTO_OTC')),
+      const SizedBox(height: 8),
+      SwitchListTile(
+        value: useAnalysis,
+        contentPadding: EdgeInsets.zero,
+        title: const Text('تشغيل بالتحليل القوي'),
+        subtitle: Text(useAnalysis ? 'يفحص الأزواج حتى $analysisSeconds ثانية ويختار صفقة بثقة +$minConfidence%' : 'تشغيل مباشر بدون تحليل بالاتجاه المختار'),
+        onChanged: (v) => setState(() => useAnalysis = v),
+      ),
+      if (!useAnalysis) DropdownButtonFormField<String>(value: manualDirection, decoration: const InputDecoration(labelText: 'الاتجاه بدون تحليل'), items: const [DropdownMenuItem(value: 'CALL', child: Text('CALL شراء')), DropdownMenuItem(value: 'PUT', child: Text('PUT بيع'))], onChanged: (v) => setState(() => manualDirection = v ?? 'CALL')),
+      if (useAnalysis) Row(children: [Expanded(child: DropdownButtonFormField<int>(value: minConfidence, decoration: const InputDecoration(labelText: 'قوة الإشارة'), items: const [DropdownMenuItem(value: 80, child: Text('80%')), DropdownMenuItem(value: 85, child: Text('85%')), DropdownMenuItem(value: 90, child: Text('90%'))], onChanged: (v) => setState(() => minConfidence = v ?? 80))), const SizedBox(width: 12), Expanded(child: DropdownButtonFormField<int>(value: analysisSeconds, decoration: const InputDecoration(labelText: 'مدة التحليل'), items: const [DropdownMenuItem(value: 20, child: Text('20s')), DropdownMenuItem(value: 30, child: Text('30s')), DropdownMenuItem(value: 45, child: Text('45s'))], onChanged: (v) => setState(() => analysisSeconds = v ?? 20)))]),
       Row(children: [Expanded(child: TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'المبلغ'))), const SizedBox(width: 12), Expanded(child: TextField(controller: maxTradesCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Max')))]),
       const SizedBox(height: 14),
       Row(children: [Expanded(child: ElevatedButton.icon(onPressed: running ? null : _start, icon: const Icon(Icons.play_arrow), label: const Text('START'))), const SizedBox(width: 10), Expanded(child: ElevatedButton.icon(onPressed: running ? _stop : null, icon: const Icon(Icons.stop), label: const Text('STOP')))]),
@@ -242,7 +263,7 @@ class _BotDashboardState extends State<BotDashboard> {
 
   Widget _signalCard() {
     final t = latestTrade;
-    if (t == null) return _panel('Signal', 'لا توجد صفقة حالياً. اضغط START للبدء.');
+    if (t == null) return _panel('Signal', useAnalysis ? 'لا توجد صفقة حالياً. عند START سيتم تحليل الأزواج واختيار أفضل صفقة.' : 'لا توجد صفقة حالياً. عند START سيتم الدخول مباشرة بدون تحليل.');
     final result = t['result']?.toString() ?? 'PENDING';
     final dir = t['direction']?.toString() ?? '';
     return Container(padding: const EdgeInsets.all(18), decoration: _box(stroke: result == 'WIN' ? Colors.greenAccent : result == 'LOSS' ? Colors.redAccent : Colors.amber), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
