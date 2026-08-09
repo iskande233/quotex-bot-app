@@ -4,5 +4,5 @@ pydantic==2.10.4
 websocket-client==1.8.0
 python-dotenv==1.0.1
 numpy==2.2.1
-# Optional pyquotex wrapper: the requested GitHub repo is not public/accessible from Railway.
-# Add a working public package/fork here later, e.g. pyquotex or git+https://github.com/OWNER/pyquotex.git
+# Public pyquotex wrapper for Quotex Demo/Real adapter
+git+https://github.com/cleitonLeonel/pyquotex.git

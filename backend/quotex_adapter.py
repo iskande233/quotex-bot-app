@@ -104,14 +104,21 @@ class PyQuotexAdapter(QuotexAdapter):
         self.session_pnl = 0.0
 
     def _load_client_class(self):
+        # Different public pyquotex forks expose different package names.
+        # Try the two most common stable_api import paths.
         try:
             from pyquotex.stable_api import Quotex  # type: ignore
             return Quotex
-        except Exception as e:
-            raise RuntimeError(
-                "pyquotex is not installed. backend/requirements.txt now includes "
-                "git+https://github.com/mrgawade/pyquotex.git. Reinstall requirements on backend/Railway."
-            ) from e
+        except Exception as first_error:
+            try:
+                from quotexapi.stable_api import Quotex  # type: ignore
+                return Quotex
+            except Exception as second_error:
+                raise RuntimeError(
+                    "pyquotex wrapper is not installed or import path changed. "
+                    "requirements.txt uses git+https://github.com/cleitonLeonel/pyquotex.git. "
+                    "Tried: pyquotex.stable_api.Quotex and quotexapi.stable_api.Quotex."
+                ) from second_error
 
     async def _maybe_await(self, value):
         if hasattr(value, "__await__"):
