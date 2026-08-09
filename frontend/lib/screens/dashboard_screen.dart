@@ -319,3 +319,182 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ...history.take(12).map((e) { final m = e as Map<String, dynamic>; final r = m['result']?.toString() ?? 'PENDING'; return ListTile(dense: true, title: Text('${m['symbol']} ${m['direction']}'), subtitle: Text('In: ${m['entry_price']} | Out: ${m['exit_price']}'), trailing: StatusPill(r, color: r == 'WIN' ? green : r == 'LOSS' ? red : gold)); }),
   ]));
 }
+
+class LogsScreen extends StatelessWidget {
+  final List<dynamic> logs;
+  const LogsScreen({super.key, required this.logs});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Bot Logs')),
+    body: ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: logs.isEmpty ? 1 : logs.length,
+      itemBuilder: (_, i) {
+        if (logs.isEmpty) return const ProCard(child: Text('No logs yet'));
+        final l = logs[i] as Map<String, dynamic>;
+        final ts = l['time'] == null
+            ? ''
+            : DateTime.fromMillisecondsSinceEpoch(((l['time'] as num).toDouble() * 1000).toInt())
+                .toIso8601String()
+                .substring(11, 19);
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: ProCard(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${l['event']}  •  $ts', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              Text('${l['message']}'),
+            ]),
+          ),
+        );
+      },
+    ),
+  );
+}
+
+class BotSettingsScreen extends StatefulWidget {
+  final String serverUrl, amount, maxTrades;
+  final double takeProfit, stopLoss;
+  final int maxConsecutiveLosses, cooldownAfterLoss, pairCooldown;
+  final Future<void> Function(
+    String server,
+    String amount,
+    String maxTrades,
+    double takeProfit,
+    double stopLoss,
+    int maxConsecutiveLosses,
+    int cooldownAfterLoss,
+    int pairCooldown,
+  ) onSave;
+
+  const BotSettingsScreen({
+    super.key,
+    required this.serverUrl,
+    required this.amount,
+    required this.maxTrades,
+    required this.takeProfit,
+    required this.stopLoss,
+    required this.maxConsecutiveLosses,
+    required this.cooldownAfterLoss,
+    required this.pairCooldown,
+    required this.onSave,
+  });
+
+  @override
+  State<BotSettingsScreen> createState() => _BotSettingsScreenState();
+}
+
+class _BotSettingsScreenState extends State<BotSettingsScreen> {
+  late final serverCtrl = TextEditingController(text: widget.serverUrl);
+  late final amountCtrl = TextEditingController(text: widget.amount);
+  late final maxTradesCtrl = TextEditingController(text: widget.maxTrades);
+  late final takeProfitCtrl = TextEditingController(text: widget.takeProfit.toStringAsFixed(0));
+  late final stopLossCtrl = TextEditingController(text: widget.stopLoss.toStringAsFixed(0));
+  late int maxLosses = widget.maxConsecutiveLosses;
+  late int cooldownLoss = widget.cooldownAfterLoss;
+  late int pairCd = widget.pairCooldown;
+  String message = '';
+
+  @override
+  void dispose() {
+    serverCtrl.dispose();
+    amountCtrl.dispose();
+    maxTradesCtrl.dispose();
+    takeProfitCtrl.dispose();
+    stopLossCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _testConnection() async {
+    try {
+      final r = await ApiService.testConnection();
+      setState(() => message = 'Backend OK: ${r['name'] ?? r['ok']}');
+    } catch (e) {
+      setState(() => message = 'Backend failed: $e');
+    }
+  }
+
+  Future<void> _testTelegram() async {
+    try {
+      await ApiService.testTelegram();
+      setState(() => message = 'Telegram test sent');
+    } catch (e) {
+      setState(() => message = 'Telegram failed: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Settings')),
+    body: ListView(padding: const EdgeInsets.all(16), children: [
+      ProCard(child: Column(children: [
+        TextField(controller: serverCtrl, decoration: proInput('Backend URL')),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: OutlinedButton.icon(onPressed: _testConnection, icon: const Icon(Icons.cloud_done), label: const Text('Test Backend'))),
+          const SizedBox(width: 10),
+          Expanded(child: OutlinedButton.icon(onPressed: _testTelegram, icon: const Icon(Icons.send), label: const Text('Test Telegram'))),
+        ]),
+      ])),
+      const SizedBox(height: 14),
+      ProCard(child: Column(children: [
+        const SectionTitle('Trading Defaults'),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: proInput('Default Amount'))),
+          const SizedBox(width: 10),
+          Expanded(child: TextField(controller: maxTradesCtrl, keyboardType: TextInputType.number, decoration: proInput('Max Trades'))),
+        ]),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: TextField(controller: takeProfitCtrl, keyboardType: TextInputType.number, decoration: proInput('Take Profit +\$'))),
+          const SizedBox(width: 10),
+          Expanded(child: TextField(controller: stopLossCtrl, keyboardType: TextInputType.number, decoration: proInput('Stop Loss -\$'))),
+        ]),
+        const SizedBox(height: 10),
+        DropdownButtonFormField<int>(
+          value: maxLosses,
+          decoration: proInput('Max Consecutive Losses'),
+          items: const [1, 2, 3, 4, 5].map((v) => DropdownMenuItem(value: v, child: Text('$v'))).toList(),
+          onChanged: (v) => setState(() => maxLosses = v ?? 3),
+        ),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: DropdownButtonFormField<int>(
+            value: cooldownLoss,
+            decoration: proInput('Cooldown After Loss'),
+            items: const [0, 1, 2, 3, 5].map((v) => DropdownMenuItem(value: v, child: Text('${v}m'))).toList(),
+            onChanged: (v) => setState(() => cooldownLoss = v ?? 2),
+          )),
+          const SizedBox(width: 10),
+          Expanded(child: DropdownButtonFormField<int>(
+            value: pairCd,
+            decoration: proInput('Pair Cooldown'),
+            items: const [0, 3, 5, 10].map((v) => DropdownMenuItem(value: v, child: Text('${v}m'))).toList(),
+            onChanged: (v) => setState(() => pairCd = v ?? 5),
+          )),
+        ]),
+        const SizedBox(height: 14),
+        ElevatedButton.icon(
+          onPressed: () async {
+            await widget.onSave(
+              serverCtrl.text,
+              amountCtrl.text,
+              maxTradesCtrl.text,
+              double.tryParse(takeProfitCtrl.text) ?? 6,
+              double.tryParse(stopLossCtrl.text) ?? 3,
+              maxLosses,
+              cooldownLoss,
+              pairCd,
+            );
+            if (context.mounted) Navigator.pop(context);
+          },
+          icon: const Icon(Icons.save),
+          label: const Text('Save Settings'),
+        ),
+      ])),
+      if (message.isNotEmpty) Padding(padding: const EdgeInsets.all(12), child: Text(message, style: const TextStyle(color: gold))),
+    ]),
+  );
+}
