@@ -104,9 +104,10 @@ class PyQuotexAdapter(QuotexAdapter):
     Credentials stay in memory only. Demo/PRACTICE is the default.
     """
 
-    def __init__(self, email: str, password: str, account_type: str = "demo"):
+    def __init__(self, email: str, password: str, account_type: str = "demo", otp_code: str | None = None):
         self.email = email
         self.password = password
+        self.otp_code = (otp_code or "").strip()
         self.account_type = account_type.lower()
         self.mode = "REAL" if self.account_type == "real" else "DEMO"
         self.client = None
@@ -150,7 +151,18 @@ class PyQuotexAdapter(QuotexAdapter):
 
     async def connect(self) -> None:
         Quotex = self._load_client_class()
-        self.client = Quotex(email=self.email, password=self.password)
+        def otp_callback(message: str):
+            if self.otp_code:
+                return self.otp_code
+            raise RuntimeError("OTP_REQUIRED: Quotex requested a verification code. Enter the code in the OTP field and login again.")
+
+        self.client = Quotex(
+            email=self.email,
+            password=self.password,
+            lang="en",
+            user_data_dir=f"/tmp/quotex_{abs(hash(self.email))}",
+            on_otp_callback=otp_callback,
+        )
         result = await self._maybe_await(self.client.connect())
         check, reason = True, ""
         if isinstance(result, tuple):
@@ -161,9 +173,11 @@ class PyQuotexAdapter(QuotexAdapter):
         if not check:
             raise RuntimeError(reason or "Quotex connect failed")
 
-        # Demo by default. Quotex wrappers usually call demo PRACTICE.
+        # Demo by default. Cleiton pyquotex uses change_account("PRACTICE"/"REAL").
         balance_mode = "REAL" if self.mode == "REAL" else "PRACTICE"
-        if hasattr(self.client, "change_balance"):
+        if hasattr(self.client, "change_account"):
+            await self._maybe_await(self.client.change_account(balance_mode))
+        elif hasattr(self.client, "change_balance"):
             await self._maybe_await(self.client.change_balance(balance_mode))
         self.connected = True
 
@@ -181,15 +195,18 @@ class PyQuotexAdapter(QuotexAdapter):
         if not self.connected:
             await self.connect()
         asset = self._asset(symbol)
-        # Preferred pyquotex candle call. Forks differ; keep fallbacks.
-        for args in ((asset, 60, 2), (asset, 60), (asset,)):
+        # Cleiton pyquotex signature: get_candles(asset, end_from_time, offset, period, ...)
+        import time as _time
+        attempts = [
+            (asset, _time.time(), 120, 60),
+            (asset, None, 120, 60),
+        ]
+        for args in attempts:
             try:
                 candles = await self._maybe_await(self.client.get_candles(*args))
-                if isinstance(candles, dict):
-                    values = list(candles.values())
-                    last = values[-1]
-                else:
-                    last = candles[-1]
+                if not candles:
+                    continue
+                last = candles[-1] if isinstance(candles, list) else list(candles.values())[-1]
                 if isinstance(last, dict):
                     return float(last.get("close") or last.get("price") or last.get("c"))
                 if isinstance(last, (list, tuple)):

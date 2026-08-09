@@ -70,22 +70,24 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final emailCtrl = TextEditingController();
   final passCtrl = TextEditingController();
+  final otpCtrl = TextEditingController();
   final serverCtrl = TextEditingController(text: ApiService.baseUrl);
   String accountType = 'demo';
   bool loading = false;
   String message = '';
 
   @override
-  void dispose() { emailCtrl.dispose(); passCtrl.dispose(); serverCtrl.dispose(); super.dispose(); }
+  void dispose() { emailCtrl.dispose(); passCtrl.dispose(); otpCtrl.dispose(); serverCtrl.dispose(); super.dispose(); }
 
   Future<void> _login() async {
     setState(() { loading = true; message = 'Connecting...'; });
     try {
       await ApiService.setBaseUrl(serverCtrl.text);
-      final res = await ApiService.login(email: emailCtrl.text.trim(), password: passCtrl.text, accountType: accountType);
+      final res = await ApiService.login(email: emailCtrl.text.trim(), password: passCtrl.text, accountType: accountType, otpCode: otpCtrl.text.trim());
       widget.onSuccess((res['mode'] ?? accountType).toString().toUpperCase());
     } catch (e) {
-      setState(() { message = 'Login failed: $e'; });
+      setState(() { message = 'Login failed: $e
+If OTP_REQUIRED appears, enter the verification code and press Login again.'; });
     } finally {
       if (mounted) setState(() { loading = false; });
     }
@@ -106,6 +108,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _field(serverCtrl, 'Backend URL / Render URL', icon: Icons.cloud),
         _field(emailCtrl, 'Quotex Email', icon: Icons.email),
         _field(passCtrl, 'Quotex Password', icon: Icons.lock, password: true),
+        _field(otpCtrl, 'OTP / Verification code (optional)', icon: Icons.verified),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
           value: accountType,

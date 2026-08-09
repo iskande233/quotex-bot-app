@@ -32,8 +32,8 @@ class ApiService {
 
   static WebSocketChannel connectWs() => WebSocketChannel.connect(Uri.parse(wsUrl));
 
-  static Future<Map<String, dynamic>> login({required String email, required String password, required String accountType}) async {
-    final res = await http.post(Uri.parse('$baseUrl/api/v1/auth/login'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'email': email, 'password': password, 'account_type': accountType}));
+  static Future<Map<String, dynamic>> login({required String email, required String password, required String accountType, String otpCode = ''}) async {
+    final res = await http.post(Uri.parse('$baseUrl/api/v1/auth/login'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'email': email, 'password': password, 'account_type': accountType, 'otp_code': otpCode}));
     return _decode(res);
   }
 

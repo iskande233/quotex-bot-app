@@ -157,7 +157,7 @@ async def login(req: LoginRequest):
         # Keep real mode explicit. Adapter exists but must be used intentionally.
         pass
     await bot.stop()
-    new_adapter = PyQuotexAdapter(req.email, req.password, req.account_type)
+    new_adapter = PyQuotexAdapter(req.email, req.password, req.account_type, req.otp_code)
     try:
         await new_adapter.connect()
     except RuntimeError as e:

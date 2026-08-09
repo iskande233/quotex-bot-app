@@ -45,6 +45,7 @@ class LoginRequest(BaseModel):
     email: str
     password: str
     account_type: Literal["demo", "real"] = "demo"
+    otp_code: Optional[str] = None
 
 class LoginResponse(BaseModel):
     success: bool
