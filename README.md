@@ -51,3 +51,11 @@ Codemagic generates Android platform files if missing and outputs installable AP
 ## Server region note
 
 If Quotex login says the service is unavailable in the United States, deploy the backend on a VPS/host in a supported region and set that backend URL in the app Settings. See `docs/SERVER_REGION_AR.md`.
+
+## APK size optimization
+
+Codemagic release workflow uses `--split-per-abi`, `--obfuscate`, and `--split-debug-info`. Install the `arm64-v8a` APK on most modern phones/TV boxes for a much smaller APK than universal debug builds. Debug APKs are expected to be large.
+
+## Launcher icon
+
+The app icon source is `frontend/assets/app_icon.png` and Codemagic generates Android launcher icons during the build using `flutter_launcher_icons`.

@@ -16,6 +16,10 @@ workflows:
         script: |
           cd frontend
           flutter pub get
+      - name: Generate launcher icon
+        script: |
+          cd frontend
+          dart run flutter_launcher_icons
       - name: Build debug APK
         script: |
           cd frontend
@@ -41,10 +45,14 @@ workflows:
         script: |
           cd frontend
           flutter pub get
-      - name: Build release APK
+      - name: Generate launcher icon
         script: |
           cd frontend
-          flutter build apk --release
+          dart run flutter_launcher_icons
+      - name: Build optimized split release APKs
+        script: |
+          cd frontend
+          flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols
     artifacts:
-      - frontend/build/app/outputs/flutter-apk/app-release.apk
+      - frontend/build/app/outputs/flutter-apk/*-release.apk
       - frontend/build/app/outputs/flutter-apk/*.apk
