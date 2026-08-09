@@ -47,7 +47,7 @@ class TradingBot:
 
     async def _execute_trade_cycle(self):
         if self.config.use_analysis:
-            self.last_analysis = {"status": "ANALYZING", "message": f"Scanning assets for {self.config.analysis_seconds}s at {self.config.min_confidence}%+"}
+            self.last_analysis = {"status": "ANALYZING", "message": f"Scanning assets for {self.config.analysis_seconds}s in {self.config.min_confidence}% range"}
             setup = await self._find_best_setup()
             if not setup:
                 self.last_analysis = {"status": "NO_SIGNAL", "message": "No setup above confidence threshold"}
@@ -101,16 +101,29 @@ class TradingBot:
                     continue
             await asyncio.sleep(2)
 
+        lower, upper = self._confidence_range()
         best = None
         for asset in candidates:
             score = self._score_asset(asset, self._series.get(asset, []))
             if score is None:
                 continue
-            if best is None or score[2] > best[2]:
+            confidence = score[2]
+            # 80 => 80-89, 90 => 90-94, 95 => 95 only/max.
+            if not (lower <= confidence < upper):
+                continue
+            if best is None or confidence > best[2]:
                 best = score
-        if best and best[2] >= self.config.min_confidence:
+        if best:
             return best
         return None
+
+    def _confidence_range(self) -> tuple[int, int]:
+        selected = int(self.config.min_confidence)
+        if selected >= 95:
+            return 95, 101
+        if selected >= 90:
+            return 90, 95
+        return 80, 90
 
     def _score_asset(self, asset: str, closes: List[float]):
         if len(closes) < 4:

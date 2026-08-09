@@ -37,7 +37,7 @@ class BotConfig(BaseModel):
     enabled: bool = False
     use_analysis: bool = True
     manual_direction: Optional[Direction] = "CALL"
-    min_confidence: int = Field(default=81, ge=81, le=95)
+    min_confidence: int = Field(default=80, ge=80, le=95)
     analysis_seconds: int = Field(default=20, ge=5, le=60)
 
 class BotStatus(BaseModel):
