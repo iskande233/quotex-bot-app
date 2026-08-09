@@ -151,6 +151,7 @@ class _BotDashboardState extends State<BotDashboard> {
   List<String> assets = ['AUTO_OTC'];
   List<dynamic> history = [];
   Map<String, dynamic>? latestTrade;
+  Map<String, dynamic>? currentSignal;
   String status = 'Ready';
   final Set<String> notified = {};
 
@@ -176,6 +177,7 @@ class _BotDashboardState extends State<BotDashboard> {
       final bal = data['balance'] as Map<String, dynamic>? ?? {};
       final st = data['status'] as Map<String, dynamic>? ?? {};
       final trade = data['trade'] as Map<String, dynamic>?;
+      final signal = st['current_signal'] as Map<String, dynamic>?;
       setState(() {
         final analysis = st['last_analysis'] as Map<String, dynamic>?;
         balance = (bal['balance'] as num?)?.toDouble() ?? balance;
@@ -191,6 +193,7 @@ class _BotDashboardState extends State<BotDashboard> {
         }
         price = (data['price'] as num?)?.toDouble() ?? price;
         history = (data['history'] as List?) ?? history;
+        currentSignal = signal;
         if (trade != null) latestTrade = trade;
         final liveTime = DateTime.now().toIso8601String().substring(11, 19);
         if (analysis != null && analysis.isNotEmpty) {
@@ -291,6 +294,25 @@ class _BotDashboardState extends State<BotDashboard> {
 
   Widget _signalCard() {
     final t = latestTrade;
+    final sig = currentSignal;
+    final tResult = t == null ? '' : (t['result']?.toString() ?? 'PENDING');
+    if (sig != null && sig['status'] == 'SCHEDULED' && tResult != 'PENDING') {
+      final dir = sig['direction']?.toString() ?? '';
+      final entry = sig['entry_time'];
+      final entryText = entry == null ? '' : DateTime.fromMillisecondsSinceEpoch(((entry as num).toDouble() * 1000).toInt()).toIso8601String().substring(11, 19);
+      return Container(padding: const EdgeInsets.all(18), decoration: _box(stroke: Colors.amber), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const Text('💲 صفقة جديدة 💲', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.amber)),
+        const Divider(color: Colors.white38),
+        Text('📊 الزوج: ${sig['symbol']}'),
+        const Text('⏱️ المدة: M1'),
+        Text('🕒 وقت الدخول: $entryText'),
+        Text('💰 المبلغ: ${sig['amount']}'),
+        Text('⚡ القوة: ${sig['confidence']}%'),
+        Text(dir == 'CALL' ? '📈 الاتجاه: CALL 🔼 (شراء)' : '📉 الاتجاه: PUT 🔻 (بيع)'),
+        const Divider(color: Colors.white38),
+        const Text('⏳ في انتظار وقت الدخول...', textAlign: TextAlign.center, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.amber)),
+      ]));
+    }
     if (t == null) return _panel('Signal', useAnalysis ? 'سيتم تحليل الأزواج واختيار أفضل صفقة.\nالحالة: $status' : 'سيتم الدخول مباشرة بدون تحليل.\nالحالة: $status');
     final result = t['result']?.toString() ?? 'PENDING';
     final dir = t['direction']?.toString() ?? '';

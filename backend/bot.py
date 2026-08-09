@@ -6,6 +6,7 @@ from typing import List
 from models import BotConfig, TradeRequest, TradeRecord
 from quotex_adapter import QuotexAdapter
 from indicators import ema, rsi, macd
+from notifier import send_signal_scheduled
 
 class TradingBot:
     def __init__(self, adapter: QuotexAdapter):
@@ -16,6 +17,7 @@ class TradingBot:
         self._task: asyncio.Task | None = None
         self._series: dict[str, List[float]] = {}
         self.last_analysis: dict = {}
+        self.current_signal: dict | None = None
 
     async def start(self, config: BotConfig):
         self.config = config
@@ -38,55 +40,76 @@ class TradingBot:
                     self.last_analysis = {"status": "STOPPED", "message": "Max trades reached"}
                     await self.stop()
                     break
-                await self._execute_trade_cycle()
+                await self._scheduled_trade_cycle()
+            except asyncio.CancelledError:
+                break
             except Exception as e:
-                # Keep the bot alive and expose the real failure to Flutter instead of silently dying.
                 self.last_analysis = {"status": "ERROR", "message": str(e)}
-            # after each result cycle, continue from next minute boundary
-            now = int(time())
-            await asyncio.sleep(max(2, 60 - (now % 60)))
+                await asyncio.sleep(5)
 
-    async def _execute_trade_cycle(self):
+    async def _scheduled_trade_cycle(self):
         if self.config.use_analysis:
             self.last_analysis = {"status": "ANALYZING", "message": f"Scanning assets for {self.config.analysis_seconds}s in {self.config.min_confidence}% range"}
             setup = await self._find_best_setup()
             if not setup:
-                self.last_analysis = {"status": "NO_SIGNAL", "message": "No setup above confidence threshold"}
+                self.current_signal = None
+                self.last_analysis = {"status": "NO_SIGNAL", "message": "No setup in selected confidence bucket"}
                 return
             symbol, direction, confidence, reason = setup
         else:
-            symbol = await self._resolve_manual_symbol()
-            direction = self.config.manual_direction or "CALL"
+            symbol = await self._resolve_manual_symbol(random_if_auto=True)
+            direction = self.config.manual_direction or random.choice(["CALL", "PUT"])
             confidence = 0
-            reason = "Manual mode without analysis"
+            reason = "Random/direct mode without analysis"
 
-        req = TradeRequest(
-            symbol=symbol,
-            direction=direction,
-            amount=self.config.investment_amount,
-            duration_seconds=60,
-        )
+        entry_time = self._next_minute_boundary()
+        self.current_signal = {
+            "symbol": symbol,
+            "direction": direction,
+            "confidence": confidence,
+            "reason": reason,
+            "entry_time": entry_time,
+            "amount": self.config.investment_amount,
+            "status": "SCHEDULED",
+        }
+        self.last_analysis = {"status": "SIGNAL_SCHEDULED", **self.current_signal}
+        send_signal_scheduled(self.current_signal)
+
+        delay = max(0, entry_time - time())
+        while delay > 0 and self.running:
+            await asyncio.sleep(min(1, delay))
+            delay = entry_time - time()
+        if not self.running:
+            return
+
+        trade = await self._place_trade(symbol, direction, confidence, reason)
+        await self._settle_trade(trade)
+        # after result, loop starts again and sends the next signal
+
+    async def _place_trade(self, symbol: str, direction: str, confidence: int, reason: str) -> TradeRecord:
         self.last_analysis = {"status": "PLACING_TRADE", "symbol": symbol, "direction": direction, "confidence": confidence, "reason": reason}
+        req = TradeRequest(symbol=symbol, direction=direction, amount=self.config.investment_amount, duration_seconds=60)
         trade = await self.adapter.place_trade(req)
-        # attach lightweight analysis fields dynamically for API model_dump unaffected
-        trade_dict_note = f"{reason} | confidence={confidence}%"
         self.history.insert(0, trade)
-        self.last_analysis = {"status": "TRADE_OPENED", "symbol": symbol, "direction": direction, "confidence": confidence, "reason": reason, "note": trade_dict_note}
-        asyncio.create_task(self._settle_trade(trade))
+        if self.current_signal:
+            self.current_signal["status"] = "OPENED"
+        self.last_analysis = {"status": "TRADE_OPENED", "symbol": symbol, "direction": direction, "confidence": confidence, "reason": reason}
+        return trade
 
-    async def _resolve_manual_symbol(self) -> str:
+    async def _resolve_manual_symbol(self, random_if_auto: bool = False) -> str:
         if self.config.symbol.strip().upper() not in {"AUTO", "AUTO_OTC", "OTC_AUTO"}:
             return self.config.symbol
         assets = await self.adapter.list_assets()
-        otc = [a for a in assets if "OTC" in a.upper()]
-        return (otc or assets or ["EURUSD-OTC"])[0]
+        otc = [a for a in assets if "OTC" in a.upper() or a.lower().endswith("otc")]
+        choices = otc or assets or ["eur_usdotc"]
+        return random.choice(choices) if random_if_auto else choices[0]
 
     async def _candidate_assets(self) -> list[str]:
         if self.config.symbol.strip().upper() not in {"AUTO", "AUTO_OTC", "OTC_AUTO"}:
             return [self.config.symbol]
         assets = await self.adapter.list_assets()
-        otc = [a for a in assets if "OTC" in a.upper()]
-        return (otc or assets or ["EURUSD-OTC"])[:12]
+        otc = [a for a in assets if "OTC" in a.upper() or a.lower().endswith("otc")]
+        return (otc or assets or ["eur_usdotc"])[:12]
 
     async def _find_best_setup(self):
         candidates = await self._candidate_assets()
@@ -101,7 +124,6 @@ class TradingBot:
                 except Exception:
                     continue
             await asyncio.sleep(2)
-
         lower, upper = self._confidence_range()
         best = None
         for asset in candidates:
@@ -109,14 +131,11 @@ class TradingBot:
             if score is None:
                 continue
             confidence = score[2]
-            # 80 => 80-89, 90 => 90-94, 95 => 95 only/max.
             if not (lower <= confidence < upper):
                 continue
             if best is None or confidence > best[2]:
                 best = score
-        if best:
-            return best
-        return None
+        return best
 
     def _confidence_range(self) -> tuple[int, int]:
         selected = int(self.config.min_confidence)
@@ -129,37 +148,22 @@ class TradingBot:
     def _score_asset(self, asset: str, closes: List[float]):
         if len(closes) < 4:
             return None
-        buy = 0
-        sell = 0
-        reason_parts = []
-        # Momentum and candle pressure
-        if closes[-1] > closes[-2] > closes[-3]:
-            buy += 25; reason_parts.append("bullish momentum")
-        if closes[-1] < closes[-2] < closes[-3]:
-            sell += 25; reason_parts.append("bearish momentum")
-        # EMA trend
+        buy = 0; sell = 0; reason_parts = []
+        if closes[-1] > closes[-2] > closes[-3]: buy += 25; reason_parts.append("bullish momentum")
+        if closes[-1] < closes[-2] < closes[-3]: sell += 25; reason_parts.append("bearish momentum")
         if len(closes) >= 9:
             ef = ema(closes, min(9, len(closes)))
             es = ema(closes, min(21, len(closes))) or ema(closes, min(9, len(closes)))
-            if ef and es and ef > es:
-                buy += 25; reason_parts.append("EMA uptrend")
-            if ef and es and ef < es:
-                sell += 25; reason_parts.append("EMA downtrend")
-        # RSI reversal zones
+            if ef and es and ef > es: buy += 25; reason_parts.append("EMA uptrend")
+            if ef and es and ef < es: sell += 25; reason_parts.append("EMA downtrend")
         if len(closes) >= 8:
             rv = rsi(closes, min(14, max(2, len(closes)-1)))
-            if rv is not None and rv < 42:
-                buy += 20; reason_parts.append("RSI low bounce")
-            if rv is not None and rv > 58:
-                sell += 20; reason_parts.append("RSI high rejection")
-        # MACD if enough data
+            if rv is not None and rv < 42: buy += 20; reason_parts.append("RSI low bounce")
+            if rv is not None and rv > 58: sell += 20; reason_parts.append("RSI high rejection")
         if len(closes) >= 35:
             mv = macd(closes)
-            if mv and mv["hist"] > 0:
-                buy += 20; reason_parts.append("MACD bullish")
-            if mv and mv["hist"] < 0:
-                sell += 20; reason_parts.append("MACD bearish")
-        # Volatility bonus
+            if mv and mv["hist"] > 0: buy += 20; reason_parts.append("MACD bullish")
+            if mv and mv["hist"] < 0: sell += 20; reason_parts.append("MACD bearish")
         spread = max(closes[-min(len(closes), 10):]) - min(closes[-min(len(closes), 10):])
         if spread > 0:
             if closes[-1] >= closes[-2]: buy += 10
@@ -170,42 +174,37 @@ class TradingBot:
         return asset, direction, confidence, reason
 
     async def _settle_trade(self, trade: TradeRecord):
+        self.last_analysis = {"status": "WAITING_RESULT", "symbol": trade.symbol, "direction": trade.direction, "message": "Waiting 60s result"}
         result_used = False
         if hasattr(self.adapter, "check_trade_result"):
             try:
                 status, profit = await self.adapter.check_trade_result(trade.id, 65)
                 trade.result = "WIN" if str(status).lower() == "win" else "LOSS"
                 trade.pnl = float(profit) if profit is not None else (trade.amount * 0.86 if trade.result == "WIN" else -trade.amount)
-                trade.closed_at = time()
-                result_used = True
+                trade.closed_at = time(); result_used = True
             except Exception:
                 result_used = False
         if not result_used:
-            self.last_analysis = {"status": "WAITING_RESULT", "symbol": trade.symbol, "direction": trade.direction, "message": "Waiting 60s result"}
             await asyncio.sleep(60)
             exit_price = await self.adapter.latest_price(trade.symbol)
-            trade.exit_price = exit_price
-            trade.closed_at = time()
+            trade.exit_price = exit_price; trade.closed_at = time()
             win = exit_price > (trade.entry_price or exit_price) if trade.direction == "CALL" else exit_price < (trade.entry_price or exit_price)
-            trade.result = "WIN" if win else "LOSS"
-            trade.pnl = trade.amount * 0.86 if win else -trade.amount
-        if hasattr(self.adapter, "balance"):
-            self.adapter.balance += trade.pnl
-        if hasattr(self.adapter, "session_pnl"):
-            self.adapter.session_pnl += trade.pnl
+            trade.result = "WIN" if win else "LOSS"; trade.pnl = trade.amount * 0.86 if win else -trade.amount
+        if hasattr(self.adapter, "balance"): self.adapter.balance += trade.pnl
+        if hasattr(self.adapter, "session_pnl"): self.adapter.session_pnl += trade.pnl
         self.last_analysis = {"status": "RESULT", "symbol": trade.symbol, "direction": trade.direction, "result": trade.result, "pnl": trade.pnl}
+        self.current_signal = None
+
+    def _next_minute_boundary(self) -> float:
+        now = int(time())
+        return float(now - (now % 60) + 60)
 
     async def open_random_trade_now(self, amount: float = 1.0) -> TradeRecord:
-        """Open one immediate random OTC trade for testing real execution."""
-        assets = await self.adapter.list_assets()
-        otc = [a for a in assets if "OTC" in a.upper()]
-        symbol = random.choice(otc or assets or ["EURUSD-OTC"])
+        symbol = await self._resolve_manual_symbol(random_if_auto=True)
         direction = random.choice(["CALL", "PUT"])
-        self.last_analysis = {"status": "RANDOM_TRADE", "symbol": symbol, "direction": direction, "message": "Opening random test trade now"}
-        trade = await self.adapter.place_trade(TradeRequest(symbol=symbol, direction=direction, amount=amount, duration_seconds=60))
-        self.history.insert(0, trade)
+        trade = await self._place_trade(symbol, direction, 0, "Immediate random test trade")
         asyncio.create_task(self._settle_trade(trade))
         return trade
 
     def status(self):
-        return {"running": self.running, "config": self.config.model_dump(), "trades_count": len(self.history), "last_analysis": self.last_analysis}
+        return {"running": self.running, "config": self.config.model_dump(), "trades_count": len(self.history), "last_analysis": self.last_analysis, "current_signal": self.current_signal}

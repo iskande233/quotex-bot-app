@@ -8,7 +8,7 @@ from config import settings
 from models import BotConfig, TradeRequest, LoginRequest, LoginResponse
 from quotex_adapter import PaperQuotexAdapter, DemoQuotexAdapter, RealQuotexAdapter, PyQuotexAdapter, QuotexAdapter
 from bot import TradingBot
-from notifier import send_trade_opened, send_trade_result, send_bot_started, send_bot_stopped
+from notifier import send_trade_opened, send_trade_result, send_bot_started, send_bot_stopped, send_login_success
 
 app = FastAPI(title="Quotex Bot App API", version="0.3.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -184,6 +184,8 @@ async def login(req: LoginRequest):
         raise HTTPException(status_code=401, detail=f"Quotex login failed: {e}")
     adapter = new_adapter
     bot = TradingBot(adapter)
+    balance = await adapter.get_balance()
+    send_login_success(balance)
     await manager.broadcast(await snapshot("login_success", {"mode": getattr(adapter, "mode", "UNKNOWN")}))
     return LoginResponse(success=True, mode=getattr(adapter, "mode", "DEMO"), message="Logged in")
 
