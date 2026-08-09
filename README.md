@@ -29,6 +29,13 @@ Open:
 http://localhost:8000/docs
 ```
 
+## Phase 4 additions
+
+- Flutter Quotex Login screen.
+- FastAPI auth endpoints for pyquotex session creation.
+- In-memory PyQuotexAdapter integration boundary.
+- Root `codemagic.yaml` for Flutter APK builds.
+
 ## Safety defaults
 
 - `PAPER_MODE=true` by default.

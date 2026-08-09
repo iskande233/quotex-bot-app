@@ -152,6 +152,18 @@ class _BotHomePageState extends State<BotHomePage> {
     }
   }
 
+  Future<void> _openLogin() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LoginPage(
+      initialMode: selectedMode == 'real' ? 'real' : 'demo',
+      onLoginSuccess: (m) {
+        selectedMode = m.toLowerCase();
+        mode = m.toUpperCase();
+        setState(() {});
+        _connectWs();
+      },
+    )));
+  }
+
   Future<void> _openSettings() async {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => SettingsPage(
       symbol: symbolCtrl.text,
@@ -174,6 +186,7 @@ class _BotHomePageState extends State<BotHomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Quotex Bot App'), actions: [
+        IconButton(onPressed: _openLogin, icon: const Icon(Icons.login)),
         IconButton(onPressed: _openSettings, icon: const Icon(Icons.settings)),
         IconButton(onPressed: _connectWs, icon: const Icon(Icons.sync)),
       ]),
@@ -195,6 +208,83 @@ class _BotHomePageState extends State<BotHomePage> {
           _Panel(title: 'Trade History', child: _HistoryList(history: history)),
         ]),
       ),
+    );
+  }
+}
+
+class LoginPage extends StatefulWidget {
+  final String initialMode;
+  final void Function(String mode) onLoginSuccess;
+  const LoginPage({super.key, required this.initialMode, required this.onLoginSuccess});
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final emailCtrl = TextEditingController();
+  final passCtrl = TextEditingController();
+  late String accountType = widget.initialMode == 'real' ? 'real' : 'demo';
+  bool loading = false;
+  String message = '';
+
+  @override
+  void dispose() {
+    emailCtrl.dispose();
+    passCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _login() async {
+    setState(() { loading = true; message = 'Connecting to Quotex...'; });
+    try {
+      final res = await ApiService.login(email: emailCtrl.text.trim(), password: passCtrl.text, accountType: accountType);
+      final m = res['mode']?.toString() ?? accountType.toUpperCase();
+      widget.onLoginSuccess(m);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Logged in: $m')));
+      Navigator.pop(context);
+    } catch (e) {
+      setState(() { message = 'Login failed: $e'; });
+    } finally {
+      if (mounted) setState(() { loading = false; });
+    }
+  }
+
+  Future<void> _logout() async {
+    setState(() { loading = true; message = 'Logging out...'; });
+    try {
+      await ApiService.logout();
+      widget.onLoginSuccess('paper');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Logged out to PAPER mode')));
+      Navigator.pop(context);
+    } catch (e) {
+      setState(() { message = 'Logout failed: $e'; });
+    } finally {
+      if (mounted) setState(() { loading = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Quotex Login')),
+      body: ListView(padding: const EdgeInsets.all(16), children: [
+        const Text('Login creates an in-memory backend session. Use DEMO first. Credentials are not stored by the app.', style: TextStyle(color: Colors.amber)),
+        const SizedBox(height: 16),
+        TextField(controller: emailCtrl, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'Quotex Email')),
+        TextField(controller: passCtrl, obscureText: true, decoration: const InputDecoration(labelText: 'Quotex Password')),
+        const SizedBox(height: 16),
+        DropdownButtonFormField<String>(value: accountType, items: const [
+          DropdownMenuItem(value: 'demo', child: Text('Demo Account')),
+          DropdownMenuItem(value: 'real', child: Text('Real Account')),
+        ], onChanged: (v) => setState(() => accountType = v ?? 'demo'), decoration: const InputDecoration(labelText: 'Account Type')),
+        const SizedBox(height: 22),
+        ElevatedButton.icon(onPressed: loading ? null : _login, icon: const Icon(Icons.login), label: const Text('Login')),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(onPressed: loading ? null : _logout, icon: const Icon(Icons.logout), label: const Text('Logout / Paper Mode')),
+        if (message.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 16), child: Text(message)),
+      ]),
     );
   }
 }

@@ -4,3 +4,5 @@ pydantic==2.10.4
 websocket-client==1.8.0
 python-dotenv==1.0.1
 numpy==2.2.1
+# Optional: install your selected pyquotex wrapper/fork for real demo integration.
+# pyquotex

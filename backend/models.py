@@ -40,3 +40,13 @@ class BotStatus(BaseModel):
     running: bool
     config: BotConfig
     trades_count: int
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+    account_type: Literal["demo", "real"] = "demo"
+
+class LoginResponse(BaseModel):
+    success: bool
+    mode: Literal["DEMO", "REAL", "PAPER"]
+    message: str = ""

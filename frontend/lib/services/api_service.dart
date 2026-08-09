@@ -39,6 +39,30 @@ class ApiService {
     return _decode(res);
   }
 
+
+  static Future<Map<String, dynamic>> login({
+    required String email,
+    required String password,
+    required String accountType,
+  }) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/api/v1/auth/login'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email, 'password': password, 'account_type': accountType}),
+    );
+    return _decode(res);
+  }
+
+  static Future<Map<String, dynamic>> logout() async {
+    final res = await http.post(Uri.parse('$baseUrl/api/v1/auth/logout'));
+    return _decode(res);
+  }
+
+  static Future<Map<String, dynamic>> session() async {
+    final res = await http.get(Uri.parse('$baseUrl/api/v1/auth/session'));
+    return _decode(res);
+  }
+
   static Future<Map<String, dynamic>> switchMode(String mode) async {
     final res = await http.post(Uri.parse('$baseUrl/api/v1/mode/$mode'));
     return _decode(res);

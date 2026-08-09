@@ -5,8 +5,8 @@ from typing import Set
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
-from models import BotConfig, TradeRequest
-from quotex_adapter import PaperQuotexAdapter, DemoQuotexAdapter, RealQuotexAdapter, QuotexAdapter
+from models import BotConfig, TradeRequest, LoginRequest, LoginResponse
+from quotex_adapter import PaperQuotexAdapter, DemoQuotexAdapter, RealQuotexAdapter, PyQuotexAdapter, QuotexAdapter
 from bot import TradingBot
 
 app = FastAPI(title="Quotex Bot App API", version="0.3.0")
@@ -140,6 +140,43 @@ async def websocket_endpoint(ws: WebSocket):
         manager.disconnect(ws)
     except Exception:
         manager.disconnect(ws)
+
+
+@app.post("/api/v1/auth/login", response_model=LoginResponse)
+async def login(req: LoginRequest):
+    """Create an in-memory Quotex session via the configured pyquotex wrapper.
+
+    Credentials are not persisted. Demo is the default recommended account type.
+    """
+    global adapter, bot
+    if req.account_type == "real":
+        # Keep real mode explicit. Adapter exists but must be used intentionally.
+        pass
+    await bot.stop()
+    new_adapter = PyQuotexAdapter(req.email, req.password, req.account_type)
+    try:
+        await new_adapter.connect()
+    except RuntimeError as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Quotex login failed: {e}")
+    adapter = new_adapter
+    bot = TradingBot(adapter)
+    await manager.broadcast(await snapshot("login_success", {"mode": getattr(adapter, "mode", "UNKNOWN")}))
+    return LoginResponse(success=True, mode=getattr(adapter, "mode", "DEMO"), message="Logged in")
+
+@app.post("/api/v1/auth/logout")
+async def logout():
+    global adapter, bot
+    await bot.stop()
+    adapter = PaperQuotexAdapter()
+    bot = TradingBot(adapter)
+    await manager.broadcast(await snapshot("logout"))
+    return {"success": True, "mode": "PAPER"}
+
+@app.get("/api/v1/auth/session")
+async def session():
+    return {"mode": getattr(adapter, "mode", "UNKNOWN"), "connected": getattr(adapter, "connected", True)}
 
 @app.post("/api/v1/mode/{mode}")
 async def switch_mode(mode: str):
