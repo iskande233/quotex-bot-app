@@ -92,14 +92,22 @@ class TradingBot:
         await self.stop()
 
     async def _scheduled_trade_cycle(self):
+        # Fast M1 pipeline:
+        # choose the coming minute first, then analyze inside the available 55s window.
+        # Example: result at 10:01:05 -> analyze until ~10:01:57 -> enter 10:02:00.
+        entry_time = self._next_entry_boundary(min_analysis_seconds=10)
+        execute_time = max(time(), entry_time - settings.entry_lead_seconds)
+        analysis_deadline = max(time() + 5, execute_time - 0.5)
+
         if self.config.use_analysis:
-            self.last_analysis = {"status": "ANALYZING", "message": "Scanning OTC assets with multi-strategy engine"}
+            remaining = max(0, int(analysis_deadline - time()))
+            self.last_analysis = {"status": "ANALYZING", "message": f"Fast scan for next M1 entry in {remaining}s", "planned_entry_time": entry_time}
             self._log("ANALYZING", self.last_analysis["message"])
-            setup = await self._find_best_setup()
+            setup = await self._find_best_setup(deadline=analysis_deadline)
             if not setup:
                 self.current_signal = None
-                self.last_analysis = {"status": "NO_SIGNAL", "message": "No setup in selected confidence bucket"}
-                self._log("NO_SIGNAL", "No setup in selected confidence bucket")
+                self.last_analysis = {"status": "NO_SIGNAL", "message": "No setup in selected confidence bucket for this minute", "planned_entry_time": entry_time}
+                self._log("NO_SIGNAL", "No setup in selected confidence bucket for this minute")
                 return
             symbol, direction, confidence, reason = setup
         else:
@@ -108,8 +116,6 @@ class TradingBot:
             confidence = 0
             reason = "Random/direct mode without analysis"
 
-        entry_time = self._next_minute_boundary()
-        execute_time = max(time(), entry_time - settings.entry_lead_seconds)
         expiry_time = entry_time + 60.0
         result_check_time = expiry_time + settings.result_delay_seconds
         self.current_signal = {
@@ -171,9 +177,13 @@ class TradingBot:
         filtered = [a for a in raw if self.pair_cooldowns.get(a, 0) <= now and a not in self.blacklisted_pairs]
         return (filtered or [a for a in raw if a not in self.blacklisted_pairs] or raw)[:12]
 
-    async def _find_best_setup(self):
+    async def _find_best_setup(self, deadline: float | None = None):
         candidates = await self._candidate_assets()
-        deadline = time() + min(max(self.config.analysis_seconds, 5), 60)
+        if deadline is None:
+            deadline = time() + min(max(self.config.analysis_seconds, 5), 60)
+        else:
+            # Never exceed configured analysis duration, but use the full remaining minute window when possible.
+            deadline = min(deadline, time() + min(max(self.config.analysis_seconds, 5), 60))
         while time() < deadline and self.running:
             for asset in candidates:
                 try:
@@ -295,6 +305,15 @@ class TradingBot:
     def _next_minute_boundary(self) -> float:
         now = int(time())
         return float(now - (now % 60) + 60)
+
+    def _next_entry_boundary(self, min_analysis_seconds: int = 10) -> float:
+        """Return the nearest M1 boundary that still leaves enough time to analyze and send the signal."""
+        now = time()
+        entry = self._next_minute_boundary()
+        available = entry - settings.entry_lead_seconds - now
+        if available < min_analysis_seconds:
+            entry += 60.0
+        return entry
 
     async def open_random_trade_now(self, amount: float = 1.0) -> TradeRecord:
         symbol = await self._resolve_manual_symbol(random_if_auto=True)
