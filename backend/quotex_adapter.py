@@ -33,6 +33,16 @@ class QuotexAdapter(ABC):
     @abstractmethod
     async def latest_price(self, symbol: str) -> float: ...
 
+    async def get_recent_candles(self, symbol: str, count: int = 80, period: int = 60) -> list[dict]:
+        candles = []
+        for _ in range(max(5, count)):
+            price = await self.latest_price(symbol)
+            candles.append({"open": price, "high": price, "low": price, "close": price})
+        return candles
+
+    async def get_realtime_sentiment(self, symbol: str):
+        return None
+
     async def list_assets(self) -> list[str]:
         return []
 
@@ -61,6 +71,18 @@ class PaperQuotexAdapter(QuotexAdapter):
 
     async def list_assets(self) -> list[str]:
         return list(OTC_PAIRS)
+
+    async def get_recent_candles(self, symbol: str, count: int = 80, period: int = 60) -> list[dict]:
+        candles = []
+        price = self._price_by_symbol.get(symbol) or await self.latest_price(symbol)
+        for _ in range(max(5, count)):
+            o = price
+            price = round(price + (random() - 0.5) * 0.0012, 6)
+            h = max(o, price) + random() * 0.00025
+            l = min(o, price) - random() * 0.00025
+            candles.append({"open": round(o, 6), "high": round(h, 6), "low": round(l, 6), "close": round(price, 6)})
+        self._price_by_symbol[symbol] = price
+        return candles
 
     async def place_trade(self, req: TradeRequest) -> TradeRecord:
         price = await self.latest_price(req.symbol)
@@ -224,6 +246,53 @@ class PyQuotexAdapter(QuotexAdapter):
             balance = 0.0
         return BalanceResponse(balance=balance, mode=self.mode, session_pnl=self.session_pnl)
 
+
+    def _normalize_candle(self, item) -> dict | None:
+        try:
+            if isinstance(item, dict):
+                o = item.get("open", item.get("o", item.get("close", item.get("c"))))
+                h = item.get("high", item.get("max", item.get("h", item.get("close", item.get("c")))))
+                l = item.get("low", item.get("min", item.get("l", item.get("close", item.get("c")))))
+                c = item.get("close", item.get("c", item.get("price", o)))
+                return {"open": float(o), "high": float(h), "low": float(l), "close": float(c), "time": item.get("time", item.get("from"))}
+            if isinstance(item, (list, tuple)) and len(item) >= 4:
+                vals = [float(x) for x in item[-4:]]
+                return {"open": vals[0], "high": vals[1], "low": vals[2], "close": vals[3]}
+        except Exception:
+            return None
+        return None
+
+    async def get_recent_candles(self, symbol: str, count: int = 80, period: int = 60) -> list[dict]:
+        if not self.connected:
+            await self.connect()
+        asset = self._asset(symbol)
+        import time as _time
+        raw = None
+        # cleitonLeonel/pyquotex exposes both get_candles and get_historical_candles.
+        for call in (
+            lambda: self.client.get_candles(asset, _time.time(), count * period, period),
+            lambda: self.client.get_candles(asset, None, count * period, period),
+            lambda: self.client.get_historical_candles(asset, amount_of_seconds=count * period, period=period, max_workers=2),
+            lambda: self.client.get_historical_candles(asset, amount_of_seconds=count * period, period=period),
+        ):
+            try:
+                raw = await self._maybe_await(call())
+                if raw:
+                    break
+            except Exception:
+                raw = None
+        if isinstance(raw, dict):
+            items = list(raw.values())
+        else:
+            items = list(raw or [])
+        candles = [c for c in (self._normalize_candle(x) for x in items) if c]
+        candles = candles[-count:]
+        if len(candles) >= 5:
+            return candles
+        # Fallback keeps the bot alive if candle mapping is temporarily unavailable.
+        price = await self.latest_price(asset)
+        return [{"open": price, "high": price, "low": price, "close": price} for _ in range(max(5, count))]
+
     async def latest_price(self, symbol: str) -> float:
         if not self.connected:
             await self.connect()
@@ -247,6 +316,17 @@ class PyQuotexAdapter(QuotexAdapter):
             except Exception:
                 continue
         raise NotImplementedError("pyquotex get_candles mapping failed for asset " + asset)
+
+    async def get_realtime_sentiment(self, symbol: str):
+        if not self.connected:
+            await self.connect()
+        method = getattr(self.client, "get_realtime_sentiment", None)
+        if not callable(method):
+            return None
+        try:
+            return await self._maybe_await(method(self._asset(symbol)))
+        except Exception:
+            return None
 
     async def list_assets(self) -> list[str]:
         """Return only OTC pairs supported by our bot.

@@ -6,7 +6,7 @@ from typing import List
 from models import BotConfig, TradeRequest, TradeRecord
 from quotex_adapter import QuotexAdapter
 from config import settings
-from indicators import ema, rsi, macd
+from indicators import ema, rsi, macd, sma, bollinger, stochastic, atr, support_resistance, candle_strength
 from notifier import send_signal_scheduled, send_auto_stop
 
 class TradingBot:
@@ -17,6 +17,7 @@ class TradingBot:
         self.history: List[TradeRecord] = []
         self._task: asyncio.Task | None = None
         self._series: dict[str, List[float]] = {}
+        self._candles: dict[str, list[dict]] = {}
         self.last_analysis: dict = {}
         self.current_signal: dict | None = None
         self.session_pnl: float = 0.0
@@ -187,57 +188,181 @@ class TradingBot:
         while time() < deadline and self.running:
             for asset in candidates:
                 try:
+                    if hasattr(self.adapter, "get_recent_candles"):
+                        candles = await self.adapter.get_recent_candles(asset, count=80, period=60)
+                        if candles:
+                            self._candles[asset] = candles[-100:]
+                            self._series[asset] = [float(c.get("close", 0) or 0) for c in candles][-100:]
+                            continue
                     price = await self.adapter.latest_price(asset)
                     arr = self._series.setdefault(asset, [])
                     arr.append(price)
-                    self._series[asset] = arr[-80:]
+                    self._series[asset] = arr[-100:]
                 except Exception:
                     continue
             await asyncio.sleep(2)
         best = None
         for asset in candidates:
-            score = self._score_asset(asset, self._series.get(asset, []))
+            score = self._score_asset(asset, self._series.get(asset, []), self._candles.get(asset, []))
             if score is None:
                 continue
+            try:
+                sentiment = await self.adapter.get_realtime_sentiment(asset) if hasattr(self.adapter, "get_realtime_sentiment") else None
+                score = self._apply_sentiment(score, sentiment)
+            except Exception:
+                pass
             if best is None or score[2] > best[2]:
                 best = score
-        # If indicators do not have enough data, still open a random OTC trade so START never stays idle.
-        if best is None and candidates:
+        # No more random fallback in safe/normal modes: after a loss streak, quality is more important than frequency.
+        if best is None and candidates and self.config.strategy_mode == "aggressive":
             asset = random.choice(candidates)
             direction = random.choice(["CALL", "PUT"])
-            return asset, direction, 50, "startup fallback random OTC"
+            return asset, direction, 50, "aggressive fallback random OTC"
         if best is not None:
-            threshold = {"safe": 90, "normal": 70, "aggressive": 0}.get(self.config.strategy_mode, 70)
+            threshold = max(self.config.min_confidence, {"safe": 90, "normal": 75, "aggressive": 0}.get(self.config.strategy_mode, 75))
             if best[2] < threshold and self.config.strategy_mode != "aggressive":
+                self._log("FILTER", f"{best[0]} {best[1]} confidence={best[2]} below threshold={threshold}")
                 return None
         return best
 
-    def _score_asset(self, asset: str, closes: List[float]):
-        if len(closes) < 4:
+    def _apply_sentiment(self, score, sentiment):
+        if not sentiment:
+            return score
+        asset, direction, confidence, reason = score
+        try:
+            data = sentiment if isinstance(sentiment, dict) else {}
+            call = float(data.get("call", data.get("buy", data.get("up", data.get("higher", 0)))) or 0)
+            put = float(data.get("put", data.get("sell", data.get("down", data.get("lower", 0)))) or 0)
+            if call <= 1 and put <= 1:
+                call *= 100; put *= 100
+            sent_dir = "CALL" if call >= put else "PUT"
+            edge = abs(call - put)
+            if edge >= 8:
+                if sent_dir == direction:
+                    confidence = min(95, int(confidence + min(8, edge / 3)))
+                    reason += f", sentiment confirms {sent_dir} {max(call, put):.0f}%"
+                else:
+                    confidence = max(0, int(confidence - min(10, edge / 2)))
+                    reason += f", sentiment divergence {sent_dir} {max(call, put):.0f}%"
+        except Exception:
+            return score
+        return asset, direction, confidence, reason
+
+    def _score_asset(self, asset: str, closes: List[float], candles: list[dict] | None = None):
+        candles = candles or []
+        if candles and len(candles) >= 5:
+            closes = [float(c.get("close", 0) or 0) for c in candles]
+            highs = [float(c.get("high", c.get("close", 0)) or 0) for c in candles]
+            lows = [float(c.get("low", c.get("close", 0)) or 0) for c in candles]
+        else:
+            highs = closes[:]
+            lows = closes[:]
+        if len(closes) < 8:
             return None
-        buy = 0; sell = 0; reason_parts = []
-        if closes[-1] > closes[-2] > closes[-3]: buy += 25; reason_parts.append("bullish momentum")
-        if closes[-1] < closes[-2] < closes[-3]: sell += 25; reason_parts.append("bearish momentum")
-        if len(closes) >= 9:
-            ef = ema(closes, min(9, len(closes)))
-            es = ema(closes, min(21, len(closes))) or ema(closes, min(9, len(closes)))
-            if ef and es and ef > es: buy += 25; reason_parts.append("EMA uptrend")
-            if ef and es and ef < es: sell += 25; reason_parts.append("EMA downtrend")
-        if len(closes) >= 8:
-            rv = rsi(closes, min(14, max(2, len(closes)-1)))
-            if rv is not None and rv < 42: buy += 20; reason_parts.append("RSI low bounce")
-            if rv is not None and rv > 58: sell += 20; reason_parts.append("RSI high rejection")
-        if len(closes) >= 35:
-            mv = macd(closes)
-            if mv and mv["hist"] > 0: buy += 20; reason_parts.append("MACD bullish")
-            if mv and mv["hist"] < 0: sell += 20; reason_parts.append("MACD bearish")
-        spread = max(closes[-min(len(closes), 10):]) - min(closes[-min(len(closes), 10):])
-        if spread > 0:
-            if closes[-1] >= closes[-2]: buy += 10
-            else: sell += 10
+
+        buy = 0
+        sell = 0
+        reason_parts: list[str] = []
+        price = closes[-1]
+
+        # 1) Support / resistance is now a core filter.
+        sr = support_resistance(highs, lows, closes, lookback=min(40, len(closes)))
+        if sr:
+            near_support = sr["dist_support"] <= 0.18 or price <= sr["recent_low"] + sr["range"] * 0.18
+            near_resistance = sr["dist_resistance"] <= 0.18 or price >= sr["recent_high"] - sr["range"] * 0.18
+            if near_support:
+                buy += 24; reason_parts.append(f"near support {sr['support']:.6f}")
+            if near_resistance:
+                sell += 24; reason_parts.append(f"near resistance {sr['resistance']:.6f}")
+            if sr["position"] < 0.28:
+                buy += 8; reason_parts.append("lower range bounce zone")
+            if sr["position"] > 0.72:
+                sell += 8; reason_parts.append("upper range rejection zone")
+
+        # 2) Trend / moving-average alignment.
+        ema9 = ema(closes, min(9, len(closes)))
+        ema21 = ema(closes, min(21, len(closes))) if len(closes) >= 21 else sma(closes, min(9, len(closes)))
+        sma50 = sma(closes, min(50, len(closes))) if len(closes) >= 20 else None
+        if ema9 and ema21:
+            if ema9 > ema21 and price >= ema9:
+                buy += 18; reason_parts.append("EMA9>EMA21 bullish")
+            if ema9 < ema21 and price <= ema9:
+                sell += 18; reason_parts.append("EMA9<EMA21 bearish")
+        if sma50:
+            if price > sma50: buy += 8; reason_parts.append("price above SMA50")
+            if price < sma50: sell += 8; reason_parts.append("price below SMA50")
+
+        # 3) Momentum confirmation.
+        rv = rsi(closes, min(14, max(2, len(closes) - 1)))
+        if rv is not None:
+            if 38 <= rv <= 58 and len(closes) >= 3 and closes[-1] > closes[-2]:
+                buy += 9; reason_parts.append(f"RSI balanced rising {rv:.1f}")
+            if 42 <= rv <= 62 and len(closes) >= 3 and closes[-1] < closes[-2]:
+                sell += 9; reason_parts.append(f"RSI balanced falling {rv:.1f}")
+            if rv < 35:
+                buy += 12; reason_parts.append(f"RSI oversold {rv:.1f}")
+            if rv > 65:
+                sell += 12; reason_parts.append(f"RSI overbought {rv:.1f}")
+        stoch = stochastic(highs, lows, closes, min(14, len(closes)))
+        if stoch is not None:
+            if stoch < 25:
+                buy += 10; reason_parts.append(f"stochastic oversold {stoch:.1f}")
+            if stoch > 75:
+                sell += 10; reason_parts.append(f"stochastic overbought {stoch:.1f}")
+
+        # 4) MACD / momentum and candle confirmation.
+        mv = macd(closes)
+        if mv:
+            if mv["hist"] > 0:
+                buy += 9; reason_parts.append("MACD bullish")
+            if mv["hist"] < 0:
+                sell += 9; reason_parts.append("MACD bearish")
+        if len(closes) >= 4:
+            if closes[-1] > closes[-2] > closes[-3]:
+                buy += 8; reason_parts.append("3-candle bullish momentum")
+            if closes[-1] < closes[-2] < closes[-3]:
+                sell += 8; reason_parts.append("3-candle bearish momentum")
+        if candles:
+            cs = candle_strength(candles[-1])
+            if cs["lower_wick"] > 0.45 and cs["bull"]:
+                buy += 10; reason_parts.append("bullish rejection wick")
+            if cs["upper_wick"] > 0.45 and cs["bear"]:
+                sell += 10; reason_parts.append("bearish rejection wick")
+            if cs["body_ratio"] < 0.12:
+                buy -= 6; sell -= 6; reason_parts.append("weak/doji candle penalty")
+
+        # 5) Bollinger + ATR volatility filter.
+        bb = bollinger(closes, min(20, len(closes)), 2.0)
+        av = atr(highs, lows, closes, min(14, max(2, len(closes) - 1)))
+        if bb:
+            width_ratio = bb["width"] / max(price, 1e-9)
+            if price <= bb["lower"]:
+                buy += 10; reason_parts.append("Bollinger lower bounce")
+            if price >= bb["upper"]:
+                sell += 10; reason_parts.append("Bollinger upper rejection")
+            if width_ratio < 0.00018:
+                buy -= 8; sell -= 8; reason_parts.append("low volatility penalty")
+        if av and sr:
+            if av / max(sr["range"], 1e-9) > 0.75:
+                buy -= 7; sell -= 7; reason_parts.append("volatile spike penalty")
+
         direction = "CALL" if buy >= sell else "PUT"
-        confidence = min(95, max(buy, sell))
-        reason = ", ".join(reason_parts[:5]) or "multi-strategy fast price action"
+        raw_score = max(buy, sell)
+        opposite = min(buy, sell)
+        edge = max(0, raw_score - opposite)
+        confidence = min(95, max(0, int(raw_score * 0.72 + edge * 0.55)))
+
+        # Strong mode must have clear edge and S/R context. This avoids random entries after loss streaks.
+        if self.config.strategy_mode == "safe":
+            has_sr = any("support" in r or "resistance" in r for r in reason_parts)
+            if not has_sr or edge < 18 or confidence < max(88, self.config.min_confidence):
+                return None
+        elif self.config.strategy_mode == "normal" and edge < 10:
+            return None
+
+        reason = ", ".join(reason_parts[:7]) or "advanced multi-indicator analysis"
+        if sr:
+            reason += f" | S={sr['support']:.6f} R={sr['resistance']:.6f}"
         return asset, direction, confidence, reason
 
     async def _settle_trade(self, trade: TradeRecord, result_check_time: float | None = None):
